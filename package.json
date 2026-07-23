@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:worldbook-identity": "node --no-warnings --experimental-strip-types lib/world-book-entry-identity.test.mts",
-    "test:json-repair": "node --no-warnings --experimental-strip-types lib/json-repair.test.mts"
+    "test:json-repair": "node --no-warnings --experimental-strip-types lib/json-repair.test.mts",
+    "test:data-schemas": "node --no-warnings --experimental-strip-types lib/data-schemas.test.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",
