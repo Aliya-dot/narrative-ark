@@ -1,0 +1,41 @@
+{
+  "name": "narrative-ark",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:worldbook-identity": "node --no-warnings --experimental-strip-types lib/world-book-entry-identity.test.mts",
+    "test:json-repair": "node --no-warnings --experimental-strip-types lib/json-repair.test.mts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "latest",
+    "dexie": "latest",
+    "docx": "latest",
+    "html2canvas": "latest",
+    "jspdf": "latest",
+    "lucide-react": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-hook-form": "latest",
+    "sonner": "latest",
+    "zod": "latest",
+    "zustand": "latest"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "latest",
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "prettier": "^3.9.5",
+    "tailwindcss": "latest",
+    "typescript": "latest"
+  }
+}
