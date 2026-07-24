@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import type { GenerationDraft, GameProject } from "./types.ts";
+import type {
+  GenerationDraft,
+  GameProject,
+  ProjectSettingsSnapshot,
+} from "./types.ts";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -93,6 +97,30 @@ function fixture(): GameProject {
     },
   ];
   return project;
+}
+
+function snapshotOf(project: GameProject): ProjectSettingsSnapshot {
+  return {
+    projectInfo: structuredClone(project.projectInfo),
+    world: structuredClone(project.world),
+    player: structuredClone(project.player),
+    characters: structuredClone(project.characters),
+    gameSystem: structuredClone(project.gameSystem),
+    story: structuredClone(project.story),
+    prompts: structuredClone(project.prompts),
+    openingScene: project.openingScene,
+  };
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    const objectValue: object = value;
+    for (const key of Reflect.ownKeys(objectValue)) {
+      deepFreeze(Reflect.get(objectValue, key));
+    }
+    Object.freeze(objectValue);
+  }
+  return value;
 }
 
 let checks = 0;
@@ -235,16 +263,7 @@ check("multiple issue kinds are aggregated in deterministic order", () => {
 
 check("settings version IDs and confirmed references are checked", () => {
   const project = fixture();
-  const snapshot = {
-    projectInfo: structuredClone(project.projectInfo),
-    world: structuredClone(project.world),
-    player: structuredClone(project.player),
-    characters: structuredClone(project.characters),
-    gameSystem: structuredClone(project.gameSystem),
-    story: structuredClone(project.story),
-    prompts: structuredClone(project.prompts),
-    openingScene: project.openingScene,
-  };
+  const snapshot = snapshotOf(project);
   project.settingsVersions = [
     {
       id: "settings-1",
@@ -258,7 +277,7 @@ check("settings version IDs and confirmed references are checked", () => {
   ];
   project.currentSettingsVersionId = "missing-settings";
   project.settingsVersions[0].projectId = "missing-project";
-  assert.deepEqual(validateProjectIntegrity(project).slice(-2), [
+  assert.deepEqual(validateProjectIntegrity(project), [
     {
       code: PROJECT_INTEGRITY_CODES.danglingReference,
       path: "currentSettingsVersionId",
@@ -277,13 +296,9 @@ check("settings version IDs and confirmed references are checked", () => {
 
 check("the checker never mutates its input", () => {
   const project = fixture();
-  const before = JSON.stringify(project);
+  const before = structuredClone(project);
   validateProjectIntegrity(project);
-  assert.equal(JSON.stringify(project), before);
-
-  const frozen = structuredClone(project);
-  Object.freeze(frozen);
-  assert.doesNotThrow(() => validateProjectIntegrity(frozen));
+  assert.deepEqual(project, before);
 });
 
 check("issues do not copy business or prompt text", () => {
@@ -312,5 +327,496 @@ check(
     assert.deepEqual(validateProjectIntegrity(project), []);
   },
 );
+
+check("settings snapshots report duplicate IDs with complete paths", () => {
+  const project = fixture();
+  const snapshot = snapshotOf(project);
+  snapshot.world.locations.push(structuredClone(snapshot.world.locations[0]));
+  snapshot.story.sideQuests = [
+    {
+      id: "snapshot-quest",
+      title: "First",
+      description: "",
+      status: "inactive",
+      objectives: [],
+    },
+    {
+      id: "snapshot-quest",
+      title: "Second",
+      description: "",
+      status: "active",
+      objectives: [],
+    },
+  ];
+  project.settingsVersions = [
+    {
+      id: "settings-1",
+      projectId: project.id,
+      versionNumber: 1,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      effectiveFromTurn: 0,
+      settingsSnapshot: snapshot,
+    },
+  ];
+  project.currentSettingsVersionId = "settings-1";
+
+  assert.deepEqual(validateProjectIntegrity(project), [
+    {
+      code: PROJECT_INTEGRITY_CODES.duplicateEntityId,
+      path: "settingsVersions[0].settingsSnapshot.world.locations[2].id",
+      entityType: "location",
+      entityId: "station",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.duplicateEntityId,
+      path: "settingsVersions[0].settingsSnapshot.story.sideQuests[1].id",
+      entityType: "side_quest",
+      entityId: "snapshot-quest",
+    },
+  ]);
+});
+
+check(
+  "settings snapshot dangling connections stay inside the snapshot path",
+  () => {
+    const project = fixture();
+    const snapshot = snapshotOf(project);
+    snapshot.world.locations[1].connections = ["missing-in-snapshot"];
+    project.settingsVersions = [
+      {
+        id: "settings-1",
+        projectId: project.id,
+        versionNumber: 1,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        effectiveFromTurn: 0,
+        settingsSnapshot: snapshot,
+      },
+    ];
+    project.currentSettingsVersionId = "settings-1";
+
+    assert.deepEqual(validateProjectIntegrity(project), [
+      {
+        code: PROJECT_INTEGRITY_CODES.danglingReference,
+        path: "settingsVersions[0].settingsSnapshot.world.locations[1].connections[0]",
+        entityType: "location",
+        entityId: "archive",
+        relatedId: "missing-in-snapshot",
+      },
+    ]);
+  },
+);
+
+check("deeply frozen legal and illegal projects are accepted", () => {
+  const legal = deepFreeze(fixture());
+  assert.deepEqual(validateProjectIntegrity(legal), []);
+
+  const illegalProject = fixture();
+  illegalProject.world.locations[0].connections = ["missing"];
+  const illegal = deepFreeze(illegalProject);
+  assert.deepEqual(validateProjectIntegrity(illegal), [
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "world.locations[0].connections[0]",
+      entityType: "location",
+      entityId: "station",
+      relatedId: "missing",
+    },
+  ]);
+  assert.equal(Object.isFrozen(illegal.world.locations), true);
+  assert.equal(Object.isFrozen(illegal.world.locations[0]), true);
+  assert.equal(Object.isFrozen(illegal.world.locations[0].connections), true);
+});
+
+check("a deeply frozen invalid project remains completely unchanged", () => {
+  const project = fixture();
+  const snapshot = snapshotOf(project);
+  project.settingsVersions = [
+    {
+      id: "settings-1",
+      projectId: "missing-project",
+      versionNumber: 1,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      effectiveFromTurn: 0,
+      settingsSnapshot: snapshot,
+    },
+  ];
+  project.currentSettingsVersionId = "missing-settings";
+  project.world.locations[0].id = " ";
+  project.world.locations[0].connections = ["missing-a", "missing-b"];
+  project.world.locations[1].id = " ";
+  project.world.locations[1].connections = [];
+  const before = structuredClone(project);
+  deepFreeze(project);
+
+  assert.deepEqual(validateProjectIntegrity(project), [
+    {
+      code: PROJECT_INTEGRITY_CODES.blankEntityId,
+      path: "world.locations[0].id",
+      entityType: "location",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.blankEntityId,
+      path: "world.locations[1].id",
+      entityType: "location",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.duplicateEntityId,
+      path: "world.locations[1].id",
+      entityType: "location",
+      entityId: " ",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "world.locations[0].connections[0]",
+      entityType: "location",
+      entityId: " ",
+      relatedId: "missing-a",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "world.locations[0].connections[1]",
+      entityType: "location",
+      entityId: " ",
+      relatedId: "missing-b",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "currentSettingsVersionId",
+      entityType: "settings_version",
+      relatedId: "missing-settings",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "settingsVersions[0].projectId",
+      entityType: "project",
+      entityId: "settings-1",
+      relatedId: "missing-project",
+    },
+  ]);
+  assert.deepEqual(project, before);
+});
+
+check("character ability uniqueness is scoped to each character", () => {
+  const project = fixture();
+  const secondCharacter = structuredClone(project.characters[0]);
+  secondCharacter.id = "second-guide";
+  secondCharacter.abilities[0].id = "shared-ability";
+  project.characters[0].abilities[0].id = "shared-ability";
+  project.characters.push(secondCharacter);
+  assert.deepEqual(validateProjectIntegrity(project), []);
+
+  project.characters[1].abilities.push(
+    structuredClone(project.characters[1].abilities[0]),
+  );
+  assert.deepEqual(
+    validateProjectIntegrity(project).filter(
+      ({ code }) => code === PROJECT_INTEGRITY_CODES.duplicateEntityId,
+    ),
+    [
+      {
+        code: PROJECT_INTEGRITY_CODES.duplicateEntityId,
+        path: "characters[1].abilities[1].id",
+        entityType: "character_ability",
+        entityId: "shared-ability",
+      },
+    ],
+  );
+});
+
+check("multiple dangling connections preserve index and input order", () => {
+  const project = fixture();
+  project.world.locations[0].connections = ["missing-first", "missing-second"];
+  assert.deepEqual(validateProjectIntegrity(project), [
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "world.locations[0].connections[0]",
+      entityType: "location",
+      entityId: "station",
+      relatedId: "missing-first",
+    },
+    {
+      code: PROJECT_INTEGRITY_CODES.danglingReference,
+      path: "world.locations[0].connections[1]",
+      entityType: "location",
+      entityId: "station",
+      relatedId: "missing-second",
+    },
+  ]);
+});
+
+type EntityCollectionCase = {
+  name: string;
+  entityType: string;
+  firstPath: string;
+  secondPath: string;
+  populate: (project: GameProject, firstId: string, secondId: string) => void;
+};
+
+const entityCollectionCases: EntityCollectionCase[] = [
+  {
+    name: "world.locations",
+    entityType: "location",
+    firstPath: "world.locations[0].id",
+    secondPath: "world.locations[1].id",
+    populate(project, firstId, secondId) {
+      project.world.locations = [
+        { id: firstId, name: "A", description: "", connections: [] },
+        { id: secondId, name: "B", description: "", connections: [] },
+      ];
+    },
+  },
+  {
+    name: "world.factions",
+    entityType: "faction",
+    firstPath: "world.factions[0].id",
+    secondPath: "world.factions[1].id",
+    populate(project, firstId, secondId) {
+      project.world.factions = [
+        { id: firstId, name: "A", description: "", attitude: 0, goal: "" },
+        { id: secondId, name: "B", description: "", attitude: 0, goal: "" },
+      ];
+    },
+  },
+  {
+    name: "player.talents",
+    entityType: "player_talent",
+    firstPath: "player.talents[0].id",
+    secondPath: "player.talents[1].id",
+    populate(project, firstId, secondId) {
+      project.player.talents = [
+        { id: firstId, name: "A", description: "" },
+        { id: secondId, name: "B", description: "" },
+      ];
+    },
+  },
+  {
+    name: "player.skills",
+    entityType: "player_skill",
+    firstPath: "player.skills[0].id",
+    secondPath: "player.skills[1].id",
+    populate(project, firstId, secondId) {
+      project.player.skills = [
+        { id: firstId, name: "A", description: "" },
+        { id: secondId, name: "B", description: "" },
+      ];
+    },
+  },
+  {
+    name: "player.inventory",
+    entityType: "player_inventory_item",
+    firstPath: "player.inventory[0].id",
+    secondPath: "player.inventory[1].id",
+    populate(project, firstId, secondId) {
+      project.player.inventory = [
+        { id: firstId, name: "A", description: "", quantity: 1 },
+        { id: secondId, name: "B", description: "", quantity: 1 },
+      ];
+    },
+  },
+  {
+    name: "player.equipment",
+    entityType: "player_equipment_item",
+    firstPath: "player.equipment[0].id",
+    secondPath: "player.equipment[1].id",
+    populate(project, firstId, secondId) {
+      project.player.equipment = [
+        { id: firstId, name: "A", description: "", quantity: 1 },
+        { id: secondId, name: "B", description: "", quantity: 1 },
+      ];
+    },
+  },
+  {
+    name: "player.statusEffects",
+    entityType: "player_status_effect",
+    firstPath: "player.statusEffects[0].id",
+    secondPath: "player.statusEffects[1].id",
+    populate(project, firstId, secondId) {
+      project.player.statusEffects = [
+        { id: firstId, name: "A", description: "" },
+        { id: secondId, name: "B", description: "" },
+      ];
+    },
+  },
+  {
+    name: "characters",
+    entityType: "character",
+    firstPath: "characters[0].id",
+    secondPath: "characters[1].id",
+    populate(project, firstId, secondId) {
+      const first = structuredClone(project.characters[0]);
+      const second = structuredClone(project.characters[0]);
+      first.id = firstId;
+      second.id = secondId;
+      project.characters = [first, second];
+    },
+  },
+  {
+    name: "characters[0].abilities",
+    entityType: "character_ability",
+    firstPath: "characters[0].abilities[0].id",
+    secondPath: "characters[0].abilities[1].id",
+    populate(project, firstId, secondId) {
+      project.characters[0].abilities = [
+        { id: firstId, name: "A", description: "" },
+        { id: secondId, name: "B", description: "" },
+      ];
+    },
+  },
+  {
+    name: "gameSystem.attributes",
+    entityType: "attribute_definition",
+    firstPath: "gameSystem.attributes[0].id",
+    secondPath: "gameSystem.attributes[1].id",
+    populate(project, firstId, secondId) {
+      project.gameSystem.attributes = [
+        { id: firstId, name: "A", initial: 0, max: 100, display: "number" },
+        { id: secondId, name: "B", initial: 0, max: 100, display: "bar" },
+      ];
+    },
+  },
+  {
+    name: "story.chapters",
+    entityType: "story_chapter",
+    firstPath: "story.chapters[0].id",
+    secondPath: "story.chapters[1].id",
+    populate(project, firstId, secondId) {
+      project.story.chapters = [
+        { id: firstId, title: "A", summary: "", goals: [] },
+        { id: secondId, title: "B", summary: "", goals: [] },
+      ];
+    },
+  },
+  {
+    name: "story.sideQuests",
+    entityType: "side_quest",
+    firstPath: "story.sideQuests[0].id",
+    secondPath: "story.sideQuests[1].id",
+    populate(project, firstId, secondId) {
+      project.story.sideQuests = [
+        {
+          id: firstId,
+          title: "A",
+          description: "",
+          status: "inactive",
+          objectives: [],
+        },
+        {
+          id: secondId,
+          title: "B",
+          description: "",
+          status: "active",
+          objectives: [],
+        },
+      ];
+    },
+  },
+  {
+    name: "story.randomEvents",
+    entityType: "random_event",
+    firstPath: "story.randomEvents[0].id",
+    secondPath: "story.randomEvents[1].id",
+    populate(project, firstId, secondId) {
+      project.story.randomEvents = [
+        { id: firstId, title: "A", trigger: "", description: "" },
+        { id: secondId, title: "B", trigger: "", description: "" },
+      ];
+    },
+  },
+  {
+    name: "story.endings",
+    entityType: "ending",
+    firstPath: "story.endings[0].id",
+    secondPath: "story.endings[1].id",
+    populate(project, firstId, secondId) {
+      project.story.endings = [
+        { id: firstId, title: "A", conditions: [], description: "" },
+        { id: secondId, title: "B", conditions: [], description: "" },
+      ];
+    },
+  },
+  {
+    name: "settingsVersions",
+    entityType: "settings_version",
+    firstPath: "settingsVersions[0].id",
+    secondPath: "settingsVersions[1].id",
+    populate(project, firstId, secondId) {
+      project.settingsVersions = [
+        {
+          id: firstId,
+          projectId: project.id,
+          versionNumber: 1,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          effectiveFromTurn: 0,
+          settingsSnapshot: snapshotOf(project),
+        },
+        {
+          id: secondId,
+          projectId: project.id,
+          versionNumber: 2,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+          effectiveFromTurn: 1,
+          settingsSnapshot: snapshotOf(project),
+        },
+      ];
+    },
+  },
+];
+
+check("the project root reports a precise blank ID issue", () => {
+  const project = fixture();
+  project.id = "\t \n";
+  assert.deepEqual(
+    validateProjectIntegrity(project).filter(
+      ({ code }) => code === PROJECT_INTEGRITY_CODES.blankEntityId,
+    ),
+    [
+      {
+        code: PROJECT_INTEGRITY_CODES.blankEntityId,
+        path: "id",
+        entityType: "project",
+      },
+    ],
+  );
+});
+
+for (const collectionCase of entityCollectionCases) {
+  check(`${collectionCase.name} reports blank and duplicate IDs`, () => {
+    const blankProject = fixture();
+    collectionCase.populate(blankProject, "\t \n", `${collectionCase.name}-2`);
+    assert.deepEqual(
+      validateProjectIntegrity(blankProject).filter(
+        ({ code }) => code === PROJECT_INTEGRITY_CODES.blankEntityId,
+      ),
+      [
+        {
+          code: PROJECT_INTEGRITY_CODES.blankEntityId,
+          path: collectionCase.firstPath,
+          entityType: collectionCase.entityType,
+        },
+      ],
+    );
+
+    const duplicateProject = fixture();
+    collectionCase.populate(duplicateProject, "duplicate", "duplicate");
+    assert.deepEqual(
+      validateProjectIntegrity(duplicateProject).filter(
+        ({ code }) => code === PROJECT_INTEGRITY_CODES.duplicateEntityId,
+      ),
+      [
+        {
+          code: PROJECT_INTEGRITY_CODES.duplicateEntityId,
+          path: collectionCase.secondPath,
+          entityType: collectionCase.entityType,
+          entityId: "duplicate",
+        },
+      ],
+    );
+  });
+}
 
 console.log(`project-integrity tests passed (${checks} checks)`);
