@@ -182,6 +182,20 @@ export type GenerationStageApplyResult =
       issues: GenerationStageIssue[];
     };
 
+type GenerationStageFailure = Extract<
+  GenerationStageApplyResult,
+  { success: false }
+>;
+
+export type GenerationStageValidationResult =
+  | {
+      success: true;
+      stage: GenerationStage;
+      data: GenerationStageResult<GenerationStage>;
+      warnings: string[];
+    }
+  | GenerationStageFailure;
+
 function pathText(path: Array<string | number>): string {
   return path.length === 0
     ? "$"
@@ -239,7 +253,7 @@ function failure(
     { success: false }
   >["operation"],
   error: z.ZodError,
-): GenerationStageApplyResult {
+): GenerationStageFailure {
   const issues = validationIssues(error);
   const first = issues[0] ?? {
     code: "unknown",
@@ -260,7 +274,7 @@ function failure(
   };
 }
 
-function invalidStageFailure(): GenerationStageApplyResult {
+function invalidStageFailure(): GenerationStageFailure {
   const issue: GenerationStageIssue = {
     code: "invalid_stage",
     path: [],
@@ -385,6 +399,30 @@ function jsonDataEqual(left: unknown, right: unknown): boolean {
   );
 }
 
+export function validateGenerationStageResult(
+  stage: unknown,
+  input: unknown,
+): GenerationStageValidationResult {
+  if (!isGenerationStage(stage)) return invalidStageFailure();
+
+  const stageResult = parseStageResult(stage, input);
+  if (!stageResult.success) {
+    return failure(
+      stage,
+      "invalid_stage_result",
+      "validate_stage_result",
+      stageResult.error,
+    );
+  }
+
+  return {
+    success: true,
+    stage,
+    data: stageResult.data,
+    warnings: [],
+  };
+}
+
 export function applyGenerationStageResult(
   project: GameProject,
   stage: unknown,
@@ -402,15 +440,8 @@ export function applyGenerationStageResult(
     );
   }
 
-  const stageResult = parseStageResult(stage, input);
-  if (!stageResult.success) {
-    return failure(
-      stage,
-      "invalid_stage_result",
-      "validate_stage_result",
-      stageResult.error,
-    );
-  }
+  const stageResult = validateGenerationStageResult(stage, input);
+  if (!stageResult.success) return stageResult;
 
   const candidate = applyValidatedStageResult(
     sourceResult.data,

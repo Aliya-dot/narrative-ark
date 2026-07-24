@@ -29,6 +29,10 @@ import {
   worldBookGenerationRequestSchema,
   worldBookSystemPrompt,
 } from "@/lib/world-book-ai";
+import {
+  isGenerationStage,
+  validateGenerationStageResult,
+} from "@/lib/generation-stage";
 type Config = {
   provider: string;
   apiKey: string;
@@ -381,9 +385,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ data: result });
     }
     if (body.action === "generate") {
-      const spec = stageSpecs[body.stage];
-      if (!spec)
-        return NextResponse.json({ error: "未知生成阶段" }, { status: 400 });
+      if (!isGenerationStage(body.stage))
+        return NextResponse.json(
+          {
+            error: "未知生成阶段",
+            code: "invalid_stage",
+            path: "$",
+          },
+          { status: 400 },
+        );
+      const stage = body.stage;
+      const spec = stageSpecs[stage];
       const lengthPlan = lengthPlanningInstruction(
         body.draft?.gameLength ?? body.project?.projectInfo?.gameLength,
       );
@@ -397,17 +409,32 @@ export async function POST(req: NextRequest) {
           {
             role: "system",
             content:
-              body.stage === "consistency"
+              stage === "consistency"
                 ? "你只做最小化一致性修补。只输出严格 JSON；不要复述完整项目，不要输出解释。"
                 : "你负责生成可持续游玩的结构化文字冒险。只输出严格 JSON。",
           },
           { role: "user", content: prompt },
         ],
         true,
-        body.stage === "consistency" ? 1800 : undefined,
+        stage === "consistency" ? 1800 : undefined,
       );
+      const result = validateGenerationStageResult(stage, extractJson(text));
+      if (!result.success)
+        return NextResponse.json(
+          {
+            error: "模型生成的数据结构不符合阶段协议",
+            code: result.code,
+            stage: result.stage,
+            path: result.pathText,
+            issues: result.issues.map((issue) => ({
+              code: issue.code,
+              path: issue.pathText,
+            })),
+          },
+          { status: 502 },
+        );
       return NextResponse.json({
-        data: z.record(z.string(), z.unknown()).parse(extractJson(text)),
+        data: result.data,
       });
     }
     if (body.action === "module") {

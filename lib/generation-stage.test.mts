@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { gameProjectSchema } from "./data-schemas.ts";
 import type {
   GenerationStage,
   GenerationStageApplyResult,
+  GenerationStageValidationResult,
 } from "./generation-stage.ts";
 import type { GameProject, GenerationDraft } from "./types.ts";
 
@@ -20,6 +22,7 @@ const {
   applyGenerationStageResult,
   generationOwnedProjectFields,
   generationStages,
+  validateGenerationStageResult,
 } = await import("./generation-stage.ts");
 const { emptyProject } = await import("./project.ts");
 
@@ -131,6 +134,20 @@ function failure(
   return result;
 }
 
+function validationSuccess(
+  result: GenerationStageValidationResult,
+): Extract<GenerationStageValidationResult, { success: true }> {
+  assert.equal(result.success, true);
+  return result;
+}
+
+function validationFailure(
+  result: GenerationStageValidationResult,
+): Extract<GenerationStageValidationResult, { success: false }> {
+  assert.equal(result.success, false);
+  return result;
+}
+
 function record(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value));
   return value as Record<string, unknown>;
@@ -174,6 +191,158 @@ check("every real stage accepts its legal return shape", () => {
     assert.equal(output.stage, stage);
     assert.equal(gameProjectSchema.safeParse(output.project).success, true);
   }
+});
+
+check("pure validation accepts every real stage without a project", () => {
+  const project = fixture();
+  for (const stage of generationStages) {
+    const input = legalResult(project, stage);
+    const before = structuredClone(input);
+    const output = validationSuccess(
+      validateGenerationStageResult(stage, input),
+    );
+    assert.equal(output.stage, stage);
+    assert.deepEqual(output.data, input);
+    assert.deepEqual(input, before);
+  }
+});
+
+check("pure validation preserves analysis patch semantics", () => {
+  assert.deepEqual(
+    validationSuccess(
+      validateGenerationStageResult("analysis", { projectInfo: {} }),
+    ).data,
+    { projectInfo: {} },
+  );
+  assert.deepEqual(
+    validationSuccess(
+      validateGenerationStageResult("analysis", {
+        projectInfo: { title: "partial" },
+      }),
+    ).data,
+    { projectInfo: { title: "partial" } },
+  );
+  const explicitUndefined = validationFailure(
+    validateGenerationStageResult("analysis", {
+      projectInfo: { title: undefined },
+    }),
+  );
+  assert.equal(explicitUndefined.pathText, "projectInfo.title");
+});
+
+check("pure validation rejects incomplete complete modules", () => {
+  const project = fixture();
+  const incompleteWorld = legalResult(project, "world");
+  deleteAt(incompleteWorld, ["world", "background"]);
+  assert.equal(
+    validationFailure(
+      validateGenerationStageResult("world", incompleteWorld),
+    ).code,
+    "invalid_stage_result",
+  );
+
+  const characters = legalResult(project, "characters");
+  (record(characters).characters as unknown[])[0] = {
+    id: "partial-character",
+  };
+  assert.ok(
+    validationFailure(
+      validateGenerationStageResult("characters", characters),
+    ).issues.some((issue) => issue.pathText.startsWith("characters[0]")),
+  );
+});
+
+check("pure validation enforces consistency ownership limits", () => {
+  validationSuccess(validateGenerationStageResult("consistency", {}));
+  const project = fixture();
+  const fourModules = {
+    world: structuredClone(project.world),
+    story: structuredClone(project.story),
+    prompts: structuredClone(project.prompts),
+    player: structuredClone(project.player),
+  };
+  assert.equal(
+    validationFailure(
+      validateGenerationStageResult("consistency", fourModules),
+    ).pathText,
+    "$",
+  );
+  assert.ok(
+    validationFailure(
+      validateGenerationStageResult("consistency", { id: "injected" }),
+    ).issues.some((issue) => issue.pathText === "id"),
+  );
+});
+
+check("pure validation rejects all invalid runtime stages safely", () => {
+  const rawMarker = "RAW-STAGE-VALIDATION-MARKER";
+  for (const stage of [
+    "unknown",
+    "",
+    null,
+    42,
+    [],
+    { marker: rawMarker },
+    undefined,
+  ]) {
+    const output = validationFailure(
+      validateGenerationStageResult(stage, { marker: rawMarker }),
+    );
+    assert.equal(output.code, "invalid_stage");
+    assert.equal(output.stage, null);
+    assert.equal(JSON.stringify(output).includes(rawMarker), false);
+  }
+});
+
+check("pure validation errors do not leak raw values", () => {
+  const rawSecret = "RAW-VALIDATION-SECRET-314159";
+  const output = validationFailure(
+    validateGenerationStageResult("opening", {
+      openingScene: 42,
+      extra: rawSecret,
+    }),
+  );
+  const serialized = JSON.stringify(output);
+  assert.equal(serialized.includes(rawSecret), false);
+  assert.equal("input" in output, false);
+  assert.equal(output.pathText, "openingScene");
+});
+
+check("generate route guards stage before chat and validates its result", () => {
+  const routeSource = readFileSync(
+    new URL("../app/api/ai/route.ts", import.meta.url),
+    "utf8",
+  );
+  const generateStart = routeSource.indexOf(
+    'if (body.action === "generate")',
+  );
+  const moduleStart = routeSource.indexOf(
+    'if (body.action === "module")',
+    generateStart,
+  );
+  assert.ok(generateStart >= 0 && moduleStart > generateStart);
+
+  const generateBranch = routeSource.slice(generateStart, moduleStart);
+  const stageGuard = generateBranch.indexOf(
+    "if (!isGenerationStage(body.stage))",
+  );
+  const modelCall = generateBranch.indexOf("const text = await chat(");
+  const resultValidation = generateBranch.indexOf(
+    "validateGenerationStageResult(stage, extractJson(text))",
+  );
+  assert.ok(stageGuard >= 0 && stageGuard < modelCall);
+  assert.ok(resultValidation > modelCall);
+  assert.ok(generateBranch.includes("data: result.data"));
+  assert.equal(generateBranch.includes("z.record("), false);
+
+  const nonGenerateSource =
+    routeSource.slice(0, generateStart) + routeSource.slice(moduleStart);
+  assert.equal(
+    nonGenerateSource.includes(
+      "validateGenerationStageResult(stage, extractJson(text))",
+    ),
+    false,
+  );
 });
 
 check("analysis accepts a partial patch and preserves omitted fields", () => {
