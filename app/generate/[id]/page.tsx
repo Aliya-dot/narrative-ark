@@ -16,6 +16,13 @@ import {
   finalizeGeneratedProject,
   formatProjectIntegrityFailure,
 } from "@/lib/generated-project-finalization";
+import {
+  classifyGenerationFailure,
+  enterGeneratedProject,
+  retainSavedProjectCleanupFailure,
+  retryGeneratedProjectDraftCleanup,
+  type GenerationFailure,
+} from "@/lib/generated-project-draft-recovery";
 const stages = [
   { id: "analysis", name: "正在理解你的创意" },
   { id: "world", name: "正在构建世界观" },
@@ -38,6 +45,8 @@ export default function Generate() {
   const router = useRouter();
   const [state, setState] = useState<Persisted>();
   const [config, setConfig] = useState<AIConfig>();
+  const [failure, setFailure] = useState<GenerationFailure>();
+  const [cleanupRunning, setCleanupRunning] = useState(false);
   const [running, setRunning] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const started = useRef(false);
@@ -67,6 +76,7 @@ export default function Generate() {
   }, [id]);
   const run = useCallback(
     async (base: Persisted, cfg: AIConfig) => {
+      setFailure(undefined);
       setRunning(true);
       controller.current = new AbortController();
       let s: Persisted = { ...base, error: undefined };
@@ -147,13 +157,13 @@ export default function Generate() {
           return;
         }
       } catch (error) {
-        const msg =
-          error instanceof GeneratedProjectDraftCleanupError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : "项目最终保存失败";
-        s = { ...s, error: msg };
+        const nextFailure = classifyGenerationFailure(error, s.project.id);
+        setFailure(nextFailure);
+        if (error instanceof GeneratedProjectDraftCleanupError) {
+          setRunning(false);
+          return;
+        }
+        s = { ...s, error: nextFailure.message };
         setState(s);
         try {
           await saveDraft(s);
@@ -168,6 +178,27 @@ export default function Generate() {
     },
     [id, router],
   );
+  const enterSavedProject = useCallback(() => {
+    if (failure?.kind !== "draft_cleanup_failed") return;
+    enterGeneratedProject(failure.projectId, router.replace);
+  }, [failure, router]);
+  const retryDraftCleanup = useCallback(async () => {
+    if (failure?.kind !== "draft_cleanup_failed") return;
+    setCleanupRunning(true);
+    try {
+      await retryGeneratedProjectDraftCleanup({
+        draftId: id,
+        deleteDraft: (draftId) => db.drafts.delete(draftId),
+        enterSavedProject: () => {
+          toast.success("生成草稿清理成功");
+          enterGeneratedProject(failure.projectId, router.replace);
+        },
+      });
+    } catch {
+      setFailure(retainSavedProjectCleanupFailure(failure.projectId));
+      setCleanupRunning(false);
+    }
+  }, [failure, id, router]);
   useEffect(() => {
     if (state && config && !started.current) {
       started.current = true;
@@ -243,6 +274,33 @@ export default function Generate() {
             </div>
           ))}
         </div>
+        {failure?.kind === "draft_cleanup_failed" && (
+          <div className="panel mt-5 p-5">
+            <p className="font-medium text-[#d17670]">项目已经保存</p>
+            <p className="muted mt-2 text-sm leading-6">{failure.message}</p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                className="btn btn-primary"
+                disabled={cleanupRunning}
+                onClick={retryDraftCleanup}
+              >
+                {cleanupRunning ? (
+                  <LoaderCircle size={15} className="animate-spin" />
+                ) : (
+                  <RotateCcw size={15} />
+                )}
+                重试清理草稿
+              </button>
+              <button
+                className="btn"
+                disabled={cleanupRunning}
+                onClick={enterSavedProject}
+              >
+                进入已保存项目
+              </button>
+            </div>
+          </div>
+        )}
         <div className="mt-5 flex justify-between">
           <button
             className="btn"
@@ -252,7 +310,7 @@ export default function Generate() {
             <Square size={14} />
             取消生成
           </button>
-          {state.error && (
+          {state.error && failure?.kind !== "draft_cleanup_failed" && (
             <button
               className="btn btn-primary"
               onClick={() => run(state, config)}

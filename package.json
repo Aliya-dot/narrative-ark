@@ -16,7 +16,8 @@
     "test:project-migration": "node --no-warnings --experimental-strip-types lib/project-migration.test.mts",
     "test:save-migration": "node --no-warnings --experimental-strip-types lib/save-migration.test.mts",
     "test:project-integrity": "node --no-warnings --experimental-strip-types lib/project-integrity.test.mts",
-    "test:generated-project-finalization": "node --no-warnings --experimental-strip-types lib/generated-project-finalization.test.mts"
+    "test:generated-project-finalization": "node --no-warnings --experimental-strip-types lib/generated-project-finalization.test.mts",
+    "test:generated-project-draft-recovery": "node --no-warnings --experimental-strip-types lib/generated-project-draft-recovery.test.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",
