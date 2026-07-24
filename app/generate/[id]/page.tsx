@@ -11,6 +11,11 @@ import { toast } from "sonner";
 import { LoadingState } from "@/components/common";
 import { protectGeneratedProjectPatch } from "@/lib/creation-ai";
 import { applyGenerationStageResult } from "@/lib/generation-stage";
+import {
+  GeneratedProjectDraftCleanupError,
+  finalizeGeneratedProject,
+  formatProjectIntegrityFailure,
+} from "@/lib/generated-project-finalization";
 const stages = [
   { id: "analysis", name: "正在理解你的创意" },
   { id: "world", name: "正在构建世界观" },
@@ -65,14 +70,16 @@ export default function Generate() {
       setRunning(true);
       controller.current = new AbortController();
       let s: Persisted = { ...base, error: undefined };
+      const saveDraft = (value: Persisted) =>
+        db.drafts.put({
+          id,
+          value,
+          updatedAt: new Date().toISOString(),
+        });
       for (let i = s.current; i < stages.length; i++) {
         s = { ...s, current: i, error: undefined };
         setState(s);
-        await db.drafts.put({
-          id,
-          value: s,
-          updatedAt: new Date().toISOString(),
-        });
+        await saveDraft(s);
         let lastError: unknown;
         try {
           let nextProject: GameProject;
@@ -120,17 +127,42 @@ export default function Generate() {
               : "生成失败";
           s = { ...s, error: msg };
           setState(s);
-          await db.drafts.put({
-            id,
-            value: s,
-            updatedAt: new Date().toISOString(),
-          });
+          await saveDraft(s);
           setRunning(false);
           return;
         }
       }
-      await db.projects.put(s.project);
-      await db.drafts.delete(id);
+      try {
+        const result = await finalizeGeneratedProject({
+          project: s.project,
+          saveLatestDraft: () => saveDraft(s),
+          saveProject: (project) => db.projects.put(project),
+          deleteDraft: () => db.drafts.delete(id),
+        });
+        if (!result.ok) {
+          s = { ...s, error: formatProjectIntegrityFailure(result.issues) };
+          setState(s);
+          await saveDraft(s);
+          setRunning(false);
+          return;
+        }
+      } catch (error) {
+        const msg =
+          error instanceof GeneratedProjectDraftCleanupError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "项目最终保存失败";
+        s = { ...s, error: msg };
+        setState(s);
+        try {
+          await saveDraft(s);
+        } catch {
+          // Preserve the original failure in React state when draft storage is unavailable.
+        }
+        setRunning(false);
+        return;
+      }
       toast.success("文游包体生成完成");
       router.replace(`/editor/${s.project.id}`);
     },
