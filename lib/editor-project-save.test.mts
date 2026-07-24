@@ -274,6 +274,24 @@ await check("multiple issues stay bounded and do not expose project content", as
   assert.deepEqual(project, before);
 });
 
+await check("editor loading normalizes only in memory without persistence", async () => {
+  const page = await readFile(
+    new URL("../app/editor/[id]/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const loadEffect = page.match(
+    /useEffect\(\(\) => \{[\s\S]*?\n  \}, \[id\]\);/,
+  )?.[0];
+
+  assert.ok(loadEffect, "expected the editor loading effect");
+  assert.match(
+    loadEffect,
+    /const normalized = ensureSettingsVersions\(withLength\);[\s\S]*setP\(normalized\);[\s\S]*setValue\(structuredClone\(normalized\.projectInfo\)\);[\s\S]*setText\(JSON\.stringify\(normalized\.projectInfo, null, 2\)\)/,
+  );
+  assert.doesNotMatch(loadEffect, /db\.projects\.(?:put|add)/);
+  assert.doesNotMatch(loadEffect, /void\s+db\.projects/);
+});
+
 await check("all active editor persistence paths use the save gate", async () => {
   const page = await readFile(
     new URL("../app/editor/[id]/page.tsx", import.meta.url),
@@ -292,11 +310,9 @@ await check("all active editor persistence paths use the save gate", async () =>
     page,
     /const duplicate = ensureSettingsVersions\(raw\);[\s\S]*saveEditorProject\(\{[\s\S]*project: duplicate,[\s\S]*saveProject: \(project\) => db\.projects\.put\(project\),[\s\S]*if \(!result\.ok\)[\s\S]*toast\.success\("已复制为新项目/,
   );
-  assert.equal(page.match(/db\.projects\.put/g)?.length, 3);
-  assert.match(
-    page,
-    /if \(!sameSettings\(normalized, a\)\) void db\.projects\.put\(normalized\)/,
-  );
+  assert.equal(page.match(/db\.projects\.put/g)?.length, 2);
+  assert.doesNotMatch(page, /db\.projects\.add/);
+  assert.doesNotMatch(page, /void\s+db\.projects/);
 });
 
 console.log(`editor project save tests passed (${checks} checks)`);

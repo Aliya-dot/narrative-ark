@@ -95,7 +95,6 @@ export default function Editor() {
         setP(normalized);
         setValue(structuredClone(normalized.projectInfo));
         setText(JSON.stringify(normalized.projectInfo, null, 2));
-        if (!sameSettings(normalized, a)) void db.projects.put(normalized);
       } else {
         setP(a);
       }
