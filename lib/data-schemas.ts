@@ -56,7 +56,7 @@ const gameFactionSchema = z.strictObject({
   goal: z.string(),
 });
 
-const gameCharacterSchema = z.strictObject({
+export const gameCharacterSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   identity: z.string(),
@@ -121,7 +121,7 @@ const gameEndingSchema = z.strictObject({
   description: z.string(),
 });
 
-const projectInfoSchema = z.strictObject({
+export const projectInfoSchema = z.strictObject({
   title: z.string(),
   description: z.string(),
   genre: z.string(),
@@ -132,7 +132,7 @@ const projectInfoSchema = z.strictObject({
   storyLength: storyLengthConfigSchema.optional(),
 });
 
-const projectWorldSchema = z.strictObject({
+export const projectWorldSchema = z.strictObject({
   background: z.string(),
   history: z.string(),
   geography: z.string(),
@@ -146,7 +146,7 @@ const projectWorldSchema = z.strictObject({
   secrets: z.array(z.string()),
 });
 
-const projectPlayerSchema = z.strictObject({
+export const projectPlayerSchema = z.strictObject({
   name: z.string(),
   gender: z.string(),
   age: z.string(),
@@ -165,7 +165,7 @@ const projectPlayerSchema = z.strictObject({
   statusEffects: z.array(gameStatusSchema),
 });
 
-const projectGameSystemSchema = z.strictObject({
+export const projectGameSystemSchema = z.strictObject({
   levelSystem: z.string(),
   attributes: z.array(attributeDefinitionSchema),
   combatRules: z.string(),
@@ -176,7 +176,7 @@ const projectGameSystemSchema = z.strictObject({
   randomCheckRules: z.string(),
 });
 
-const projectStorySchema = z.strictObject({
+export const projectStorySchema = z.strictObject({
   mainGoal: z.string(),
   openingEvent: z.string(),
   chapters: z.array(storyChapterSchema),
@@ -185,7 +185,7 @@ const projectStorySchema = z.strictObject({
   endings: z.array(gameEndingSchema),
 });
 
-const projectPromptsSchema = z.strictObject({
+export const projectPromptsSchema = z.strictObject({
   gameMasterPrompt: z.string(),
   openingPrompt: z.string(),
   stateUpdatePrompt: z.string(),
