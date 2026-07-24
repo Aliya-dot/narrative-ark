@@ -70,10 +70,20 @@ import {
   buildWorldBookRetrievalContext,
   retrieveWorldBookContext,
 } from "@/lib/world-book";
+import {
+  createProjectSave,
+  formatProjectSaveFailure,
+  loadLatestProjectSave,
+  loadProjectSave,
+  updateProjectSave,
+} from "@/lib/project-save-boundary";
+import { projectSaveStorage } from "@/lib/project-save-storage";
+import { prepareGameProject } from "@/lib/project-migration";
 export default function Play() {
   const { id } = useParams<{ id: string }>();
-  const [p, setP] = useState<GameProject>();
-  const [s, setS] = useState<GameSave>();
+  const [p, setP] = useState<GameProject | null>();
+  const [s, setS] = useState<GameSave | null>();
+  const [loadError, setLoadError] = useState("");
   const [config, setConfig] = useState<AIConfig>();
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -158,34 +168,92 @@ export default function Play() {
   }
   useEffect(() => {
     (async () => {
-      const storedProject = await db.projects.get(id);
-      const project = storedProject
-        ? ensureSettingsVersions(storedProject)
-        : undefined;
-      if (project && project !== storedProject) await db.projects.put(project);
-      setP(project);
-      setConfig(await db.configs.get("active"));
-      if (!project) return;
-      const wanted = new URLSearchParams(location.search).get("save");
-      let save = wanted
-        ? await db.saves.get(wanted)
-        : await db.saves.where("projectId").equals(id).last();
-      if (!save) {
-        save = createSave(project);
-        // 使用稳定 ID，避免 React 开发模式的重复挂载并发创建两个初始存档。
-        save.id = `initial_${project.id}`;
-        await db.saves.put(save);
+      setLoadError("");
+      try {
+        const storedProject = await db.projects.get(id);
+        const preparedProject = storedProject
+          ? prepareGameProject(storedProject)
+          : undefined;
+        const project =
+          preparedProject?.success === true
+            ? ensureSettingsVersions(preparedProject.data)
+            : undefined;
+        if (project && project !== storedProject) await db.projects.put(project);
+        setP(project ?? null);
+        setConfig(await db.configs.get("active"));
+        if (!project) {
+          setS(null);
+          setLoadError("项目不存在或当前地址已失效。");
+          return;
+        }
+
+        const wanted = new URLSearchParams(location.search).get("save");
+        let loaded;
+        if (wanted) {
+          loaded = await loadProjectSave({
+            routeProjectId: id,
+            project,
+            saveId: wanted,
+            storage: projectSaveStorage,
+          });
+        } else {
+          loaded = await loadLatestProjectSave({
+            routeProjectId: id,
+            project,
+            storage: projectSaveStorage,
+          });
+          if (!loaded.ok && loaded.code === "save_not_found") {
+            const initial = createSave(project);
+            // 稳定 ID 只用于处理开发模式重复挂载；add 保证不会覆盖同 ID 记录。
+            initial.id = `initial_${project.id}`;
+            loaded = await createProjectSave({
+              project,
+              save: initial,
+              storage: projectSaveStorage,
+            });
+            if (!loaded.ok && loaded.code === "save_id_conflict") {
+              loaded = await loadProjectSave({
+                routeProjectId: id,
+                project,
+                saveId: initial.id,
+                storage: projectSaveStorage,
+              });
+            }
+          }
+        }
+        if (!loaded.ok) {
+          setS(null);
+          setLoadError(formatProjectSaveFailure(loaded.code));
+          return;
+        }
+
+        let save = loaded.value;
+        const initialSummary =
+          save.turn === 0 && save.rollingSummary.length > 220
+            ? project.story.openingEvent || save.rollingSummary
+            : save.rollingSummary;
+        const compactedSummary = compactSummary(initialSummary, 180);
+        if (compactedSummary !== save.rollingSummary) {
+          const normalized = structuredClone(save);
+          normalized.rollingSummary = compactedSummary;
+          const updated = await updateProjectSave({
+            project,
+            save: normalized,
+            storage: projectSaveStorage,
+          });
+          if (!updated.ok) {
+            setS(null);
+            setLoadError(formatProjectSaveFailure(updated.code));
+            return;
+          }
+          save = updated.value;
+        }
+        setS(save);
+      } catch {
+        setP(null);
+        setS(null);
+        setLoadError("项目或存档加载失败。");
       }
-      const initialSummary =
-        save.turn === 0 && save.rollingSummary.length > 220
-          ? project.story.openingEvent || save.rollingSummary
-          : save.rollingSummary;
-      const compactedSummary = compactSummary(initialSummary, 180);
-      if (compactedSummary !== save.rollingSummary) {
-        save.rollingSummary = compactedSummary;
-        await db.saves.put(save);
-      }
-      setS(save);
     })();
   }, [id]);
   useEffect(() => {
@@ -266,9 +334,18 @@ export default function Play() {
     saveLayout(leftOpen, rightOpen, next);
   }
   async function persist(next: GameSave) {
-    next.updatedAt = new Date().toISOString();
-    await db.saves.put(next);
-    setS({ ...next });
+    if (!p || p.id !== id) {
+      throw new Error("项目不存在或当前地址已失效。");
+    }
+    const candidate = structuredClone(next);
+    candidate.updatedAt = new Date().toISOString();
+    const result = await updateProjectSave({
+      project: p,
+      save: candidate,
+      storage: projectSaveStorage,
+    });
+    if (!result.ok) throw new Error(formatProjectSaveFailure(result.code));
+    setS(result.value);
   }
   async function send(
     action = input,
@@ -423,7 +500,7 @@ export default function Play() {
   if (!p || !s)
     return (
       <section className="container py-12">
-        <ErrorState message="项目或存档不存在。" />
+        <ErrorState message={loadError || "项目或存档不存在。"} />
       </section>
     );
   const latestNarrator = [...s.recentMessages]
@@ -980,15 +1057,20 @@ export default function Play() {
         <button
           className="btn btn-gold mb-4 w-full"
           onClick={async () => {
-            await persist(s);
-            toast.success("当前进度已保存");
+            try {
+              await persist(s);
+              toast.success("当前进度已保存");
+            } catch {
+              toast.error("保存失败，请稍后重试。");
+            }
           }}
         >
           <SaveIcon size={15} />
           快速保存当前进度
         </button>
         <SaveManager
-          projectId={p.id}
+          project={p}
+          routeProjectId={id}
           current={s}
           onLoad={(next) => {
             setS(next);

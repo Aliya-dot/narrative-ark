@@ -42,6 +42,8 @@ import {
 } from "@/lib/settings-version";
 import { saveEditorProject } from "@/lib/editor-project-save";
 import { formatProjectIntegrityFailure } from "@/lib/project-integrity-summary";
+import { listProjectSaves } from "@/lib/project-save-boundary";
+import { projectSaveStorage } from "@/lib/project-save-storage";
 const labels: Record<ModuleKey, string> = {
   projectInfo: "游戏总览",
   world: "世界观",
@@ -77,10 +79,10 @@ export default function Editor() {
     Promise.all([
       db.projects.get(id),
       db.configs.get("active"),
-      db.saves.where("projectId").equals(id).toArray(),
+      listProjectSaves({ projectId: id, storage: projectSaveStorage }),
     ]).then(([a, c, projectSaves]) => {
       setConfig(c);
-      setSaves(projectSaves);
+      setSaves(projectSaves.ok ? projectSaves.value : []);
       if (a) {
         const withLength = a.projectInfo.gameLength
           ? a

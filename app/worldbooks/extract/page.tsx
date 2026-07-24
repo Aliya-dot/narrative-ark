@@ -24,6 +24,7 @@ import {
   type WorldBookExtractionMode,
   type WorldBookExtractionResult,
 } from "@/lib/world-book-extraction";
+import { resolveSaveForProject } from "@/lib/project-save-boundary";
 
 export default function ExtractWorldBookPage() {
   return (
@@ -61,7 +62,10 @@ function ExtractWorldBookContent() {
     });
   }, []);
   const project = projects.find((item) => item.id === projectId);
-  const projectSaves = saves.filter((item) => item.projectId === projectId);
+  const projectSaves = saves.flatMap((item) => {
+    const resolved = resolveSaveForProject({ projectId, save: item });
+    return resolved.ok ? [resolved.value] : [];
+  });
   const save =
     projectSaves.find((item) => item.id === saveId) || projectSaves[0];
   const selected = result?.candidates.find((item) => item.id === selectedId);

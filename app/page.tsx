@@ -20,6 +20,7 @@ import {
   executeProjectImport,
   formatProjectImportFailure,
 } from "@/lib/project-import-workflow";
+import { resolveSaveForProject } from "@/lib/project-save-boundary";
 export default function Home() {
   const [projects, setProjects] = useState<GameProject[] | null>(null);
   const [config, setConfig] = useState<AIConfig>();
@@ -42,7 +43,17 @@ export default function Home() {
     ps = normalizedProjects;
     setProjects(ps);
     setConfig(await db.configs.get("active"));
-    const saves = await db.saves.orderBy("updatedAt").reverse().toArray();
+    const rawSaves = await db.saves.orderBy("updatedAt").reverse().toArray();
+    const projectById = new Map(ps.map((project) => [project.id, project]));
+    const saves = rawSaves.flatMap((save) => {
+      const project = projectById.get(save.projectId);
+      if (!project) return [];
+      const result = resolveSaveForProject({
+        projectId: project.id,
+        save,
+      });
+      return result.ok ? [result.value] : [];
+    });
     setLast(saves[0]);
     setLatestByProject(
       Object.fromEntries(
