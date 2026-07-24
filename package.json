@@ -14,7 +14,8 @@
     "test:generation-route": "node --no-warnings --experimental-strip-types lib/generation-route.test.mts",
     "test:data-schemas": "node --no-warnings --experimental-strip-types lib/data-schemas.test.mts",
     "test:project-migration": "node --no-warnings --experimental-strip-types lib/project-migration.test.mts",
-    "test:save-migration": "node --no-warnings --experimental-strip-types lib/save-migration.test.mts"
+    "test:save-migration": "node --no-warnings --experimental-strip-types lib/save-migration.test.mts",
+    "test:project-integrity": "node --no-warnings --experimental-strip-types lib/project-integrity.test.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",
