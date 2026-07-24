@@ -16,6 +16,10 @@ import { ProjectCard } from "@/components/project-card";
 import { ConfirmDialog, EmptyState, LoadingState } from "@/components/common";
 import { toast } from "sonner";
 import { ensureSettingsVersions } from "@/lib/settings-version";
+import {
+  executeProjectImport,
+  formatProjectImportFailure,
+} from "@/lib/project-import-workflow";
 export default function Home() {
   const [projects, setProjects] = useState<GameProject[] | null>(null);
   const [config, setConfig] = useState<AIConfig>();
@@ -58,44 +62,19 @@ export default function Home() {
   async function importJson(file?: File) {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as unknown;
-      const bundle = parsed as {
-        format?: string;
-        project?: GameProject;
-        save?: GameSave;
-      };
-      const isGameBundle =
-        typeof parsed === "object" &&
-        parsed !== null &&
-        bundle.format === "narrative-ark-game";
-      const imported = (isGameBundle ? bundle.project : parsed) as
-        GameProject | undefined;
-      if (
-        !imported?.id ||
-        !imported.projectInfo?.title ||
-        !imported.world ||
-        !imported.story
-      )
-        throw new Error("缺少必要的项目字段");
-      imported.version = imported.version || 1;
-      imported.updatedAt = new Date().toISOString();
-      const p = ensureSettingsVersions(imported);
-      await db.projects.put(p);
-      if (isGameBundle && bundle.save) {
-        bundle.save.projectId = p.id;
-        bundle.save.updatedAt = new Date().toISOString();
-        bundle.save.settingsVersionId ??= p.currentSettingsVersionId;
-        bundle.save.settingsVersionNumber ??= p.settingsVersionNumber;
-        await db.saves.put(bundle.save);
+      const result = await executeProjectImport(file, async (success) => {
+        await load();
+        toast.success(
+          success.kind === "game_bundle"
+            ? `游戏已导入，可继续第 ${success.saveTurn} 回合`
+            : "项目已导入",
+        );
+      });
+      if (!result.ok) {
+        toast.error(formatProjectImportFailure(result));
       }
-      await load();
-      toast.success(
-        isGameBundle && bundle.save
-          ? `游戏已导入，可继续第 ${bundle.save.turn} 回合`
-          : "项目已导入",
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "导入失败");
+    } catch {
+      toast.error("导入失败，未显示成功。");
     }
   }
   return (

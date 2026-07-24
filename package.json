@@ -17,6 +17,7 @@
     "test:save-migration": "node --no-warnings --experimental-strip-types lib/save-migration.test.mts",
     "test:project-integrity": "node --no-warnings --experimental-strip-types lib/project-integrity.test.mts",
     "test:project-import-preparation": "node --no-warnings --experimental-strip-types lib/project-import-preparation.test.mts",
+    "test:project-import-workflow": "node --no-warnings --experimental-strip-types lib/project-import-workflow.test.mts",
     "test:generated-project-finalization": "node --no-warnings --experimental-strip-types lib/generated-project-finalization.test.mts",
     "test:generated-project-draft-recovery": "node --no-warnings --experimental-strip-types lib/generated-project-draft-recovery.test.mts",
     "test:editor-project-save": "node --no-warnings --experimental-strip-types lib/editor-project-save.test.mts"
