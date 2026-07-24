@@ -345,6 +345,30 @@ check("generate route guards stage before chat and validates its result", () => 
   );
 });
 
+check("generation page applies protected results through the safe entry point", () => {
+  const pageSource = readFileSync(
+    new URL("../app/generate/[id]/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const runStart = pageSource.indexOf("const run = useCallback(");
+  const runEnd = pageSource.indexOf("useEffect(() => {", runStart);
+  assert.ok(runStart >= 0 && runEnd > runStart);
+
+  const runSource = pageSource.slice(runStart, runEnd);
+  const request = runSource.indexOf("await generateStage(");
+  const protection = runSource.indexOf("protectGeneratedProjectPatch(");
+  const application = runSource.indexOf("applyGenerationStageResult(");
+  const failureGuard = runSource.indexOf("if (!applied.success)");
+  const projectCommit = runSource.indexOf("project: nextProject");
+  assert.ok(request >= 0 && request < protection);
+  assert.ok(protection < application);
+  assert.ok(application < failureGuard && failureGuard < projectCommit);
+  assert.equal(runSource.includes("...stageResult"), false);
+  assert.equal(runSource.includes("...protectedResult"), false);
+  assert.equal(runSource.includes("...patch"), false);
+  assert.equal(runSource.includes("s.project = {"), false);
+});
+
 check("analysis accepts a partial patch and preserves omitted fields", () => {
   const project = fixture();
   const before = structuredClone(project.projectInfo);
@@ -502,6 +526,39 @@ check("a partial world cannot replace the complete world", () => {
   );
   assert.ok(output.issues.length > 1);
   assert.equal(output.success, false);
+});
+
+check("failed page-style applications are atomic", () => {
+  const project = fixture();
+  const projectBefore = structuredClone(project);
+  const inputs: Array<[GenerationStage, unknown]> = [
+    ["world", { world: { background: "partial" } }],
+    [
+      "analysis",
+      {
+        projectInfo: {
+          title: undefined,
+        },
+      },
+    ],
+    [
+      "consistency",
+      {
+        id: "injected-id",
+        updatedAt: "injected-time",
+      },
+    ],
+  ];
+
+  for (const [stage, input] of inputs) {
+    const inputBefore = structuredClone(input);
+    const output = failure(
+      applyGenerationStageResult(project, stage, input),
+    );
+    assert.equal("project" in output, false);
+    assert.deepEqual(project, projectBefore);
+    assert.deepEqual(input, inputBefore);
+  }
 });
 
 check("only modules owned by a stage change", () => {

@@ -9,8 +9,8 @@ import { emptyProject } from "@/lib/project";
 import { generateStage } from "@/lib/ai-client";
 import { toast } from "sonner";
 import { LoadingState } from "@/components/common";
-import { storyLengthConfig } from "@/lib/story-length";
 import { protectGeneratedProjectPatch } from "@/lib/creation-ai";
+import { applyGenerationStageResult } from "@/lib/generation-stage";
 const stages = [
   { id: "analysis", name: "正在理解你的创意" },
   { id: "world", name: "正在构建世界观" },
@@ -75,33 +75,39 @@ export default function Generate() {
         });
         let lastError: unknown;
         try {
-          let patch =
-            stages[i].id === "world" && s.draft.worldBinding
-              ? {}
-              : await generateStage(
-                  cfg,
-                  stages[i].id,
-                  s.draft,
-                  s.project,
-                  controller.current.signal,
-                );
-          if (!patch || typeof patch !== "object")
-            throw new Error("AI 返回了空结果");
-          patch = protectGeneratedProjectPatch(patch, s.project, s.draft);
-          if (patch.projectInfo) {
-            patch.projectInfo = {
-              ...s.project.projectInfo,
-              ...patch.projectInfo,
-              gameLength: s.draft.gameLength || "standard",
-              storyLength: storyLengthConfig(s.draft.gameLength || "standard"),
-            };
+          let nextProject: GameProject;
+          if (stages[i].id === "world" && s.draft.worldBinding) {
+            nextProject = structuredClone(s.project);
+          } else {
+            const stageResult = await generateStage(
+              cfg,
+              stages[i].id,
+              s.draft,
+              s.project,
+              controller.current.signal,
+            );
+            if (!stageResult || typeof stageResult !== "object")
+              throw new Error("AI 返回了空结果");
+            const protectedResult = protectGeneratedProjectPatch(
+              stageResult,
+              s.project,
+              s.draft,
+            );
+            const applied = applyGenerationStageResult(
+              s.project,
+              stages[i].id,
+              protectedResult,
+            );
+            if (!applied.success)
+              throw new Error(`AI 返回的阶段数据无效（${applied.pathText}）`);
+            nextProject = applied.project;
           }
-          s.project = {
-            ...s.project,
-            ...patch,
-            updatedAt: new Date().toISOString(),
+          nextProject.updatedAt = new Date().toISOString();
+          s = {
+            ...s,
+            project: nextProject,
+            completed: [...new Set([...s.completed, i])],
           };
-          s.completed = [...new Set([...s.completed, i])];
           lastError = undefined;
         } catch (error) {
           lastError = error;
