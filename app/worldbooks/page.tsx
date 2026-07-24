@@ -20,6 +20,14 @@ import type {
   WorldBookEntry,
   WorldBookVersion,
 } from "@/lib/types";
+import {
+  formatWorldBookMappingErrors,
+  remapWorldBookEntries,
+} from "@/lib/world-book-entry-mapping";
+import {
+  type WorldBookRecordStore,
+  writeWorldBookRecords,
+} from "@/lib/world-book-record-write";
 import { createWorldBookBundle, parseWorldBookBundle } from "@/lib/world-book";
 
 function downloadJson(name: string, value: unknown) {
@@ -33,6 +41,21 @@ function downloadJson(name: string, value: unknown) {
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+const worldBookRecordStore: WorldBookRecordStore = {
+  runTransaction: async (operation) => {
+    await db.transaction(
+      "rw",
+      db.worldBooks,
+      db.worldBookEntries,
+      db.worldBookVersions,
+      operation,
+    );
+  },
+  addWorldBook: (book) => db.worldBooks.add(book),
+  addEntries: (entries) => db.worldBookEntries.bulkAdd(entries),
+  addVersion: (version) => db.worldBookVersions.add(version),
+};
 
 export default function WorldBooksPage() {
   const [books, setBooks] = useState<WorldBook[]>([]);
@@ -58,18 +81,19 @@ export default function WorldBooksPage() {
       .where("worldBookId")
       .equals(source.id)
       .toArray();
+    const remapped = remapWorldBookEntries({
+      entries: sourceEntries,
+      createWorldBookId: () => uid("world"),
+      createEntryId: () => uid("entry"),
+    });
+    if (!remapped.ok) {
+      toast.error(formatWorldBookMappingErrors(remapped.errors));
+      return;
+    }
     const now = new Date().toISOString();
-    const id = uid("world");
-    const entryMap = new Map(
-      sourceEntries.map((entry) => [entry.id, uid("entry")]),
-    );
-    const entries: WorldBookEntry[] = sourceEntries.map((entry) => ({
-      ...structuredClone(entry),
-      id: entryMap.get(entry.id)!,
-      worldBookId: id,
-      relatedEntryIds: entry.relatedEntryIds
-        .map((related) => entryMap.get(related))
-        .filter(Boolean) as string[],
+    const id = remapped.worldBookId;
+    const entries: WorldBookEntry[] = remapped.entries.map((entry) => ({
+      ...entry,
       createdAt: now,
       updatedAt: now,
     }));
@@ -96,17 +120,11 @@ export default function WorldBooksPage() {
         entries: structuredClone(entries),
       },
     };
-    await db.transaction(
-      "rw",
-      db.worldBooks,
-      db.worldBookEntries,
-      db.worldBookVersions,
-      async () => {
-        await db.worldBooks.put(book);
-        await db.worldBookEntries.bulkPut(entries);
-        await db.worldBookVersions.put(version);
-      },
-    );
+    await writeWorldBookRecords(worldBookRecordStore, {
+      book,
+      entries,
+      version,
+    });
     toast.success("已创建世界书副本");
     await reload();
   }
@@ -156,18 +174,19 @@ export default function WorldBooksPage() {
   async function importFile(file: File) {
     try {
       const bundle = parseWorldBookBundle(JSON.parse(await file.text()));
+      const remapped = remapWorldBookEntries({
+        entries: bundle.entries,
+        createWorldBookId: () => uid("world"),
+        createEntryId: () => uid("entry"),
+      });
+      if (!remapped.ok) {
+        toast.error(formatWorldBookMappingErrors(remapped.errors));
+        return;
+      }
       const now = new Date().toISOString();
-      const id = uid("world");
-      const entryMap = new Map(
-        bundle.entries.map((entry) => [entry.id, uid("entry")]),
-      );
-      const entries = bundle.entries.map((entry) => ({
+      const id = remapped.worldBookId;
+      const entries: WorldBookEntry[] = remapped.entries.map((entry) => ({
         ...entry,
-        id: entryMap.get(entry.id)!,
-        worldBookId: id,
-        relatedEntryIds: entry.relatedEntryIds
-          .map((related) => entryMap.get(related))
-          .filter(Boolean) as string[],
         createdAt: now,
         updatedAt: now,
       }));
@@ -194,23 +213,15 @@ export default function WorldBooksPage() {
           entries: structuredClone(entries),
         },
       };
-      await db.transaction(
-        "rw",
-        db.worldBooks,
-        db.worldBookEntries,
-        db.worldBookVersions,
-        async () => {
-          await db.worldBooks.put(book);
-          await db.worldBookEntries.bulkPut(entries);
-          await db.worldBookVersions.put(version);
-        },
-      );
+      await writeWorldBookRecords(worldBookRecordStore, {
+        book,
+        entries,
+        version,
+      });
       toast.success("世界书导入成功");
       await reload();
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? `导入失败：${error.message}` : "导入失败",
-      );
+    } catch {
+      toast.error("导入失败：文件格式或数据无效");
     }
   }
 

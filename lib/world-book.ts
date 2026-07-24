@@ -191,7 +191,9 @@ const triggerSchema = z.object({
 
 const entrySchema = z
   .object({
-    id: z.string().min(1).max(160),
+    // Blank IDs are a semantic mapping error so the safe import path can
+    // report blank_entry_id after structural bundle parsing.
+    id: z.string().max(160),
     worldBookId: z.string().min(1).max(160),
     category: z.enum(
       WORLD_BOOK_CATEGORIES as [
@@ -423,7 +425,6 @@ export function parseWorldBookBundle(value: unknown): WorldBookBundle {
       return {
         ...entry,
         worldBookId: parsed.worldBook.id,
-        relatedEntryIds: entry.relatedEntryIds.filter((id) => ids.has(id)),
       };
     }),
   };
