@@ -16,8 +16,11 @@ registerHooks({
   },
 });
 
-const { applyGenerationStageResult, generationStages } =
-  await import("./generation-stage.ts");
+const {
+  applyGenerationStageResult,
+  generationOwnedProjectFields,
+  generationStages,
+} = await import("./generation-stage.ts");
 const { emptyProject } = await import("./project.ts");
 
 const draft: GenerationDraft = {
@@ -145,6 +148,16 @@ function setAt(value: unknown, path: string[], replacement: unknown): void {
   target[path[path.length - 1]] = replacement;
 }
 
+function reverseObjectKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseObjectKeyOrder);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .reverse()
+      .map(([key, child]) => [key, reverseObjectKeyOrder(child)]),
+  );
+}
+
 let checks = 0;
 function check(name: string, run: () => void): void {
   run();
@@ -163,12 +176,58 @@ check("every real stage accepts its legal return shape", () => {
   }
 });
 
+check("analysis accepts a partial patch and preserves omitted fields", () => {
+  const project = fixture();
+  const before = structuredClone(project.projectInfo);
+  const output = success(
+    applyGenerationStageResult(project, "analysis", {
+      projectInfo: { title: "仅更新标题" },
+    }),
+  );
+  assert.equal(output.changed, true);
+  assert.equal(output.project.projectInfo.title, "仅更新标题");
+  assert.equal(
+    output.project.projectInfo.description,
+    before.description,
+  );
+  assert.equal(output.project.projectInfo.genre, before.genre);
+  assert.equal(output.project.projectInfo.tone, before.tone);
+  assert.equal(output.project.projectInfo.creationMode, before.creationMode);
+  assert.equal(output.project.projectInfo.freedomMode, before.freedomMode);
+  assert.equal(output.project.projectInfo.gameLength, before.gameLength);
+  assert.deepEqual(output.project.projectInfo.storyLength, before.storyLength);
+});
+
+check("analysis accepts an empty patch as a stable no-op", () => {
+  const project = fixture();
+  const output = success(
+    applyGenerationStageResult(project, "analysis", { projectInfo: {} }),
+  );
+  assert.equal(output.changed, false);
+  assert.deepEqual(output.project, project);
+});
+
+check("analysis rejects wrong types, undefined, unknowns, and storyLength", () => {
+  const project = fixture();
+  for (const projectInfo of [
+    { title: 42 },
+    { title: null },
+    { title: undefined },
+    { unknown: "field" },
+    { storyLength: structuredClone(project.projectInfo.storyLength) },
+  ]) {
+    const output = failure(
+      applyGenerationStageResult(project, "analysis", { projectInfo }),
+    );
+    assert.equal(output.code, "invalid_stage_result");
+  }
+});
+
 check("every stage reports a missing required nested field", () => {
   const requiredPaths: Record<
-    Exclude<GenerationStage, "consistency">,
+    Exclude<GenerationStage, "analysis" | "consistency">,
     string[]
   > = {
-    analysis: ["projectInfo", "title"],
     world: ["world", "background"],
     characters: ["player", "name"],
     system: ["gameSystem", "levelSystem"],
@@ -194,6 +253,19 @@ check("every stage reports a missing required nested field", () => {
     consistencyOutput.issues.some(
       (issue) => issue.pathText === "world.background",
     ),
+  );
+});
+
+check("characters rejects a partial array element", () => {
+  const project = fixture();
+  const input = record(legalResult(project, "characters"));
+  assert.ok(Array.isArray(input.characters));
+  delete record(input.characters[0]).name;
+  const output = failure(
+    applyGenerationStageResult(project, "characters", input),
+  );
+  assert.ok(
+    output.issues.some((issue) => issue.pathText === "characters[0].name"),
   );
 });
 
@@ -318,37 +390,23 @@ check("an invalid source returns no partial project", () => {
   assert.equal("project" in output, false);
 });
 
-check("a final project validation failure returns no partial project", () => {
+check("invalid runtime stages return structured failures without throwing", () => {
   const project = fixture();
-  const originalStructuredClone = globalThis.structuredClone;
-  globalThis.structuredClone = function structuredCloneWithInvalidRoot<T>(
-    value: T,
-  ): T {
-    const clone = originalStructuredClone(value);
-    if (
-      clone !== null &&
-      typeof clone === "object" &&
-      !Array.isArray(clone) &&
-      Object.hasOwn(clone, "projectInfo")
-    ) {
-      record(clone).id = 42;
-    }
-    return clone;
-  };
-  try {
+  const rawMarker = "RAW-STAGE-MARKER";
+  for (const stage of ["missing", "", null, 42, { rawMarker }]) {
     const output = failure(
       applyGenerationStageResult(
         project,
-        "opening",
-        legalResult(project, "opening"),
+        stage,
+        { openingScene: "ignored" },
       ),
     );
-    assert.equal(output.code, "invalid_final_project");
-    assert.equal(output.operation, "validate_final_project");
-    assert.equal(output.pathText, "id");
+    assert.equal(output.code, "invalid_stage");
+    assert.equal(output.stage, null);
+    assert.equal(output.operation, "validate_stage");
+    assert.equal(output.recoverable, true);
     assert.equal("project" in output, false);
-  } finally {
-    globalThis.structuredClone = originalStructuredClone;
+    assert.equal(JSON.stringify(output).includes(rawMarker), false);
   }
 });
 
@@ -388,6 +446,17 @@ check("reapplying an identical valid stage result is stable", () => {
   assert.deepEqual(second.project, first.project);
 });
 
+check("changed ignores object key order at every nesting level", () => {
+  const project = fixture();
+  const reordered = reverseObjectKeyOrder(project) as GameProject;
+  assert.equal(gameProjectSchema.safeParse(reordered).success, true);
+  const output = success(
+    applyGenerationStageResult(reordered, "consistency", {}),
+  );
+  assert.equal(output.changed, false);
+  assert.deepEqual(output.project, project);
+});
+
 check("errors do not leak raw field values or projects", () => {
   const project = fixture();
   const rawSecret = "RAW-SECRET-927451";
@@ -417,32 +486,130 @@ check("non-object, array, string, and null root inputs are rejected", () => {
 
 check("stages cannot modify identity, timestamps, or unrelated roots", () => {
   const project = fixture();
-  for (const forbidden of ["id", "createdAt", "updatedAt", "version"]) {
-    const input = record(legalResult(project, "opening"));
+  for (const forbidden of [
+    "id",
+    "version",
+    "createdAt",
+    "updatedAt",
+    "settingsVersions",
+    "currentSettingsVersionId",
+    "settingsVersionNumber",
+    "worldBinding",
+    "scenarioId",
+  ]) {
+    const input: Record<string, unknown> = {};
     input[forbidden] = "forbidden";
     const output = failure(
-      applyGenerationStageResult(project, "opening", input),
+      applyGenerationStageResult(project, "consistency", input),
     );
     assert.ok(output.issues.some((issue) => issue.pathText === forbidden));
   }
 });
 
-check("consistency accepts at most three complete known modules", () => {
+check("generation ownership is explicit and excludes project metadata", () => {
+  assert.deepEqual(generationOwnedProjectFields, [
+    "projectInfo",
+    "world",
+    "player",
+    "characters",
+    "gameSystem",
+    "story",
+    "prompts",
+    "openingScene",
+  ]);
+});
+
+check("empty consistency is a stable no-op", () => {
   const project = fixture();
-  const allowed = success(
+  const output = success(
+    applyGenerationStageResult(project, "consistency", {}),
+  );
+  assert.equal(output.changed, false);
+  assert.deepEqual(output.project, project);
+});
+
+check("consistency projectInfo is a patch that preserves length metadata", () => {
+  const project = fixture();
+  const before = structuredClone(project.projectInfo);
+  const titleOnly = success(
     applyGenerationStageResult(project, "consistency", {
-      world: structuredClone(project.world),
-      story: structuredClone(project.story),
-      prompts: structuredClone(project.prompts),
+      projectInfo: { title: "一致性标题" },
     }),
   );
-  assert.equal(allowed.changed, false);
+  assert.equal(titleOnly.changed, true);
+  assert.equal(titleOnly.project.projectInfo.title, "一致性标题");
+  assert.equal(
+    titleOnly.project.projectInfo.gameLength,
+    before.gameLength,
+  );
+  assert.deepEqual(
+    titleOnly.project.projectInfo.storyLength,
+    before.storyLength,
+  );
+
+  const lengthUpdate = success(
+    applyGenerationStageResult(project, "consistency", {
+      projectInfo: { gameLength: "long" },
+    }),
+  );
+  assert.equal(lengthUpdate.project.projectInfo.gameLength, "long");
+  assert.deepEqual(
+    lengthUpdate.project.projectInfo.storyLength,
+    before.storyLength,
+  );
+});
+
+check("consistency projectInfo rejects unknowns and storyLength injection", () => {
+  const project = fixture();
+  for (const projectInfo of [
+    { unknown: "field" },
+    { storyLength: structuredClone(project.projectInfo.storyLength) },
+  ]) {
+    const output = failure(
+      applyGenerationStageResult(project, "consistency", { projectInfo }),
+    );
+    assert.equal(output.code, "invalid_stage_result");
+  }
+});
+
+check("consistency applies one complete changed module", () => {
+  const project = fixture();
+  const world = structuredClone(project.world);
+  world.background = "一致性修正后的世界";
+  const output = success(
+    applyGenerationStageResult(project, "consistency", { world }),
+  );
+  assert.equal(output.changed, true);
+  assert.equal(output.project.world.background, world.background);
+  assert.deepEqual(output.project.story, project.story);
+});
+
+check("consistency applies three changed modules and rejects four", () => {
+  const project = fixture();
+  const world = structuredClone(project.world);
+  const story = structuredClone(project.story);
+  const prompts = structuredClone(project.prompts);
+  world.background = "新世界";
+  story.mainGoal = "新目标";
+  prompts.openingPrompt = "新开场规则";
+
+  const allowed = success(
+    applyGenerationStageResult(project, "consistency", {
+      world,
+      story,
+      prompts,
+    }),
+  );
+  assert.equal(allowed.changed, true);
+  assert.equal(allowed.project.world.background, "新世界");
+  assert.equal(allowed.project.story.mainGoal, "新目标");
+  assert.equal(allowed.project.prompts.openingPrompt, "新开场规则");
 
   const output = failure(
     applyGenerationStageResult(project, "consistency", {
-      world: structuredClone(project.world),
-      story: structuredClone(project.story),
-      prompts: structuredClone(project.prompts),
+      world,
+      story,
+      prompts,
       player: structuredClone(project.player),
     }),
   );

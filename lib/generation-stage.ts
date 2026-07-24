@@ -24,18 +24,39 @@ export const generationStages = [
 
 export type GenerationStage = (typeof generationStages)[number];
 
-const analysisProjectInfoSchema = z.strictObject({
-  title: z.string(),
-  description: z.string(),
-  genre: z.string(),
-  tone: z.string(),
-  creationMode: z.enum(["simple", "advanced"]),
-  freedomMode: z.enum(["linear", "hybrid", "open"]),
-  gameLength: z.enum(["short", "standard", "long", "endless"]),
-});
+const generationStageSet: ReadonlySet<string> = new Set(generationStages);
+
+export function isGenerationStage(stage: unknown): stage is GenerationStage {
+  return typeof stage === "string" && generationStageSet.has(stage);
+}
+
+const generatedProjectInfoFieldSelection = {
+  title: true,
+  description: true,
+  genre: true,
+  tone: true,
+  creationMode: true,
+  freedomMode: true,
+  gameLength: true,
+} as const;
+
+const generatedProjectInfoPatchSchema = projectInfoSchema
+  .pick(generatedProjectInfoFieldSelection)
+  .partial()
+  .superRefine((patch, context) => {
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: "Present patch fields must have a defined value.",
+        });
+      }
+    }
+  });
 
 export const analysisStageResultSchema = z.strictObject({
-  projectInfo: analysisProjectInfoSchema,
+  projectInfo: generatedProjectInfoPatchSchema,
 });
 
 export const worldStageResultSchema = z.strictObject({
@@ -59,17 +80,48 @@ export const promptsStageResultSchema = z.strictObject({
   prompts: projectPromptsSchema,
 });
 
+// These are the top-level fields owned by the eight real generation stages.
+// Project metadata, settings history, and world-book bindings are excluded.
+export const generationOwnedProjectFields = [
+  "projectInfo",
+  "world",
+  "player",
+  "characters",
+  "gameSystem",
+  "story",
+  "prompts",
+  "openingScene",
+] as const satisfies readonly (keyof GameProject)[];
+
+type GenerationOwnedProjectField =
+  (typeof generationOwnedProjectFields)[number];
+
+const generationOwnedProjectFieldSet: ReadonlySet<string> = new Set(
+  generationOwnedProjectFields,
+);
+
+const consistencyStageFields = {
+  projectInfo: generatedProjectInfoPatchSchema.optional(),
+  world: projectWorldSchema.optional(),
+  player: projectPlayerSchema.optional(),
+  characters: z.array(gameCharacterSchema).optional(),
+  gameSystem: projectGameSystemSchema.optional(),
+  story: projectStorySchema.optional(),
+  prompts: projectPromptsSchema.optional(),
+  openingScene: z.string().optional(),
+} satisfies Record<GenerationOwnedProjectField, z.ZodType>;
+
 export const consistencyStageResultSchema = z
-  .strictObject({
-    projectInfo: projectInfoSchema.optional(),
-    world: projectWorldSchema.optional(),
-    player: projectPlayerSchema.optional(),
-    characters: z.array(gameCharacterSchema).optional(),
-    gameSystem: projectGameSystemSchema.optional(),
-    story: projectStorySchema.optional(),
-    prompts: projectPromptsSchema.optional(),
-    openingScene: z.string().optional(),
-  })
+  .strictObject(consistencyStageFields)
+  .refine(
+    (result) =>
+      Object.keys(result).every((field) =>
+        generationOwnedProjectFieldSet.has(field),
+      ),
+    {
+      message: "Consistency stage may only replace generation-owned fields.",
+    },
+  )
   .refine((result) => Object.keys(result).length <= 3, {
     message: "Consistency stage may replace at most three modules.",
   });
@@ -113,11 +165,13 @@ export type GenerationStageApplyResult =
   | {
       success: false;
       code:
+        | "invalid_stage"
         | "invalid_source_project"
         | "invalid_stage_result"
         | "invalid_final_project";
-      stage: GenerationStage;
+      stage: GenerationStage | null;
       operation:
+        | "validate_stage"
         | "validate_source_project"
         | "validate_stage_result"
         | "validate_final_project";
@@ -206,6 +260,26 @@ function failure(
   };
 }
 
+function invalidStageFailure(): GenerationStageApplyResult {
+  const issue: GenerationStageIssue = {
+    code: "invalid_stage",
+    path: [],
+    pathText: "$",
+    message: "Generation stage is not recognized.",
+  };
+  return {
+    success: false,
+    code: "invalid_stage",
+    stage: null,
+    operation: "validate_stage",
+    path: issue.path,
+    pathText: issue.pathText,
+    message: "validate_stage failed at $.",
+    recoverable: true,
+    issues: [issue],
+  };
+}
+
 function parseStageResult(
   stage: GenerationStage,
   input: unknown,
@@ -227,13 +301,7 @@ function applyValidatedStageResult(
   switch (stage) {
     case "analysis": {
       const value = analysisStageResultSchema.parse(result).projectInfo;
-      next.projectInfo.title = value.title;
-      next.projectInfo.description = value.description;
-      next.projectInfo.genre = value.genre;
-      next.projectInfo.tone = value.tone;
-      next.projectInfo.creationMode = value.creationMode;
-      next.projectInfo.freedomMode = value.freedomMode;
-      next.projectInfo.gameLength = value.gameLength;
+      applyProjectInfoPatch(next.projectInfo, value);
       break;
     }
     case "world":
@@ -257,7 +325,7 @@ function applyValidatedStageResult(
     case "consistency": {
       const value = consistencyStageResultSchema.parse(result);
       if (value.projectInfo !== undefined)
-        next.projectInfo = value.projectInfo;
+        applyProjectInfoPatch(next.projectInfo, value.projectInfo);
       if (value.world !== undefined) next.world = value.world;
       if (value.player !== undefined) next.player = value.player;
       if (value.characters !== undefined) next.characters = value.characters;
@@ -276,11 +344,54 @@ function applyValidatedStageResult(
   return next;
 }
 
+function applyProjectInfoPatch(
+  target: GameProject["projectInfo"],
+  patch: z.output<typeof generatedProjectInfoPatchSchema>,
+): void {
+  if (patch.title !== undefined) target.title = patch.title;
+  if (patch.description !== undefined) target.description = patch.description;
+  if (patch.genre !== undefined) target.genre = patch.genre;
+  if (patch.tone !== undefined) target.tone = patch.tone;
+  if (patch.creationMode !== undefined)
+    target.creationMode = patch.creationMode;
+  if (patch.freedomMode !== undefined) target.freedomMode = patch.freedomMode;
+  if (patch.gameLength !== undefined) target.gameLength = patch.gameLength;
+}
+
+function jsonDataEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null) return false;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false;
+    return (
+      left.length === right.length &&
+      left.every((value, index) => jsonDataEqual(value, right[index]))
+    );
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        jsonDataEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
 export function applyGenerationStageResult(
   project: GameProject,
-  stage: GenerationStage,
+  stage: unknown,
   input: unknown,
 ): GenerationStageApplyResult {
+  if (!isGenerationStage(stage)) return invalidStageFailure();
+
   const sourceResult = gameProjectSchema.safeParse(project);
   if (!sourceResult.success) {
     return failure(
@@ -306,6 +417,8 @@ export function applyGenerationStageResult(
     stage,
     stageResult.data,
   );
+  // With module schemas derived from the final project schema this is normally
+  // defensive, but it remains the final boundary for future cross-field rules.
   const finalResult = gameProjectSchema.safeParse(candidate);
   if (!finalResult.success) {
     return failure(
@@ -320,7 +433,7 @@ export function applyGenerationStageResult(
     success: true,
     stage,
     project: finalResult.data,
-    changed: JSON.stringify(finalResult.data) !== JSON.stringify(project),
+    changed: !jsonDataEqual(finalResult.data, project),
     warnings: [],
   };
 }
