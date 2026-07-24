@@ -40,6 +40,8 @@ import {
   settingsSnapshot,
   type SettingsRisk,
 } from "@/lib/settings-version";
+import { saveEditorProject } from "@/lib/editor-project-save";
+import { formatProjectIntegrityFailure } from "@/lib/project-integrity-summary";
 const labels: Record<ModuleKey, string> = {
   projectInfo: "游戏总览",
   world: "世界观",
@@ -127,7 +129,14 @@ export default function Editor() {
         gameStarted ? currentTurn + 1 : 0,
         note || `更新${labels[changedKey]}`,
       );
-      await db.projects.put(next);
+      const result = await saveEditorProject({
+        project: next,
+        saveProject: (project) => db.projects.put(project),
+      });
+      if (!result.ok) {
+        toast.error(formatProjectIntegrityFailure(result.issues));
+        return false;
+      }
       setP(next);
       const nextValue = structuredClone(next[changedKey]);
       if (changedKey === key) {
@@ -145,8 +154,10 @@ export default function Editor() {
           ? `设定版本 ${next.settingsVersionNumber} 已保存，将从第 ${currentTurn + 1} 回合开始生效`
           : `设定版本 ${next.settingsVersionNumber} 已保存，将用于游戏开局`,
       );
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "设定保存失败");
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -218,11 +229,12 @@ export default function Editor() {
     matchingSave?: GameSave,
   ) {
     if (!p) return;
-    await commitSettings(
+    const saved = await commitSettings(
       structuredClone(version.settingsSnapshot),
       key,
       `恢复自设定版本 ${version.versionNumber}`,
     );
+    if (!saved) return;
     setVersionsOpen(false);
     if (matchingSave) {
       window.location.href = `/play/${p.id}?save=${matchingSave.id}`;
@@ -247,9 +259,20 @@ export default function Editor() {
       },
     };
     const duplicate = ensureSettingsVersions(raw);
-    await db.projects.put(duplicate);
-    toast.success("已复制为新项目，原项目和存档保持不变");
-    window.location.href = `/editor/${duplicate.id}`;
+    try {
+      const result = await saveEditorProject({
+        project: duplicate,
+        saveProject: (project) => db.projects.put(project),
+      });
+      if (!result.ok) {
+        toast.error(formatProjectIntegrityFailure(result.issues));
+        return;
+      }
+      toast.success("已复制为新项目，原项目和存档保持不变");
+      window.location.href = `/editor/${duplicate.id}`;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "项目复制失败");
+    }
   }
   if (p === undefined)
     return (
