@@ -1,13 +1,7 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import {
-  GameSaveSchema,
-  gameSaveSchema,
-} from "./data-schemas.ts";
-import type {
-  SaveDataIssue,
-  SavePreparationResult,
-} from "./save-migration.ts";
+import { GameSaveSchema, gameSaveSchema } from "./data-schemas.ts";
+import type { SaveDataIssue, SavePreparationResult } from "./save-migration.ts";
 import type { GenerationDraft } from "./types.ts";
 
 registerHooks({
@@ -19,10 +13,8 @@ registerHooks({
   },
 });
 
-const {
-  CURRENT_GAME_SAVE_SCHEMA_VERSION,
-  prepareGameSave,
-} = await import("./save-migration.ts");
+const { CURRENT_GAME_SAVE_SCHEMA_VERSION, prepareGameSave } =
+  await import("./save-migration.ts");
 const { createSave, emptyProject, snapshot } = await import("./project.ts");
 
 const draft: GenerationDraft = {
@@ -120,7 +112,10 @@ const historyResult = successResult(prepareGameSave(saveWithHistory));
 assert.equal(historyResult.data.history.length, 1);
 assert.equal(GameSaveSchema.safeParse(historyResult.data).success, true);
 assert.deepEqual(saveWithHistory, historyBefore);
-assert.notEqual(historyResult.data.history, property(saveWithHistory, "history"));
+assert.notEqual(
+  historyResult.data.history,
+  property(saveWithHistory, "history"),
+);
 
 const optionalFieldsAbsent = clone(save);
 const optionalRoot = objectValue(optionalFieldsAbsent);
@@ -132,7 +127,10 @@ delete optionalRoot.lastWorldBookContext;
 const optionalBefore = clone(optionalFieldsAbsent);
 const optionalResult = successResult(prepareGameSave(optionalFieldsAbsent));
 assert.equal(optionalResult.normalized, false);
-assert.equal(Object.hasOwn(objectValue(optionalResult.data), "turnDurationsMs"), false);
+assert.equal(
+  Object.hasOwn(objectValue(optionalResult.data), "turnDurationsMs"),
+  false,
+);
 assert.equal(
   Object.hasOwn(
     objectValue(optionalResult.data),
@@ -252,14 +250,9 @@ const unknownHistory = clone(saveWithHistory);
 const firstSnapshot = arrayValue(property(unknownHistory, "history"))[0];
 objectValue(firstSnapshot).unexpectedSnapshot = "snapshot-secret-not-reported";
 const unknownHistoryResult = prepareGameSave(unknownHistory);
-hasPath(
-  failureIssues(unknownHistoryResult),
-  "history.0.unexpectedSnapshot",
-);
+hasPath(failureIssues(unknownHistoryResult), "history.0.unexpectedSnapshot");
 assert.equal(
-  JSON.stringify(unknownHistoryResult).includes(
-    "snapshot-secret-not-reported",
-  ),
+  JSON.stringify(unknownHistoryResult).includes("snapshot-secret-not-reported"),
   false,
 );
 
@@ -300,5 +293,151 @@ const finalIssues = failureIssues(finalFailure);
 hasPath(finalIssues, "history");
 hasPath(finalIssues, "recentMessages");
 assert.equal(Object.hasOwn(finalFailure, "data"), false);
+
+const legacyItems = clone(save);
+const legacyRoot = objectValue(legacyItems);
+const legacyPlayerState = objectValue(property(legacyItems, "playerState"));
+legacyPlayerState.inventory = [
+  {
+    id: "legacy-type",
+    name: "Typed item",
+    description: "Original type description.",
+    quantity: 1,
+    type: "key_item",
+  },
+  {
+    id: "legacy-damage",
+    name: "Damaging item",
+    description: "Original damage description.",
+    quantity: 1,
+    damage: 5,
+  },
+  {
+    id: "legacy-both",
+    name: "Combined item",
+    description: "Original combined description.",
+    quantity: 1,
+    type: "weapon",
+    damage: 9,
+  },
+];
+legacyPlayerState.equipment = [
+  {
+    id: "legacy-equipment",
+    name: "Equipment",
+    description: "Original equipment description.",
+    quantity: 1,
+    type: "armor",
+    damage: 2,
+  },
+];
+const legacySnapshot = objectValue(snapshot(save));
+const legacySnapshotPlayerState = objectValue(
+  property(legacySnapshot, "playerState"),
+);
+legacySnapshotPlayerState.inventory = [
+  {
+    id: "legacy-history-inventory",
+    name: "Historical inventory",
+    description: "Historical inventory description.",
+    quantity: 1,
+    type: "consumable",
+  },
+];
+legacySnapshotPlayerState.equipment = [
+  {
+    id: "legacy-history-equipment",
+    name: "Historical equipment",
+    description: "Historical equipment description.",
+    quantity: 1,
+    damage: 3,
+  },
+];
+legacyRoot.history = [legacySnapshot];
+
+const legacyBefore = clone(legacyItems);
+const legacyPrepared = successResult(prepareGameSave(legacyItems));
+assert.equal(legacyPrepared.migrated, true);
+assert.equal(GameSaveSchema.safeParse(legacyPrepared.data).success, true);
+assert.deepEqual(legacyItems, legacyBefore);
+assert.equal(legacyPrepared.data.id, property(legacyItems, "id"));
+assert.equal(legacyPrepared.data.projectId, property(legacyItems, "projectId"));
+assert.match(
+  legacyPrepared.data.playerState.inventory[0].description,
+  /Original type description\.\n\[历史属性：类型：key_item\]/,
+);
+assert.match(
+  legacyPrepared.data.playerState.inventory[1].description,
+  /Original damage description\.\n\[历史属性：伤害：5\]/,
+);
+assert.match(
+  legacyPrepared.data.playerState.inventory[2].description,
+  /Original combined description\.\n\[历史属性：类型：weapon；伤害：9\]/,
+);
+assert.match(
+  legacyPrepared.data.playerState.equipment[0].description,
+  /\[历史属性：类型：armor；伤害：2\]/,
+);
+assert.match(
+  legacyPrepared.data.history[0].playerState.inventory[0].description,
+  /\[历史属性：类型：consumable\]/,
+);
+assert.match(
+  legacyPrepared.data.history[0].playerState.equipment[0].description,
+  /\[历史属性：伤害：3\]/,
+);
+for (const item of [
+  ...legacyPrepared.data.playerState.inventory,
+  ...legacyPrepared.data.playerState.equipment,
+  ...legacyPrepared.data.history[0].playerState.inventory,
+  ...legacyPrepared.data.history[0].playerState.equipment,
+]) {
+  assert.equal(Object.hasOwn(item, "type"), false);
+  assert.equal(Object.hasOwn(item, "damage"), false);
+}
+const legacyPreparedAgain = successResult(prepareGameSave(legacyPrepared.data));
+assert.deepEqual(legacyPreparedAgain.data, legacyPrepared.data);
+assert.equal(legacyPreparedAgain.migrated, false);
+assert.deepEqual(legacyPreparedAgain.warnings, []);
+
+const invalidLegacyType = clone(save);
+objectValue(property(invalidLegacyType, "playerState")).inventory = [
+  {
+    id: "invalid-type",
+    name: "Invalid type",
+    description: "Invalid type fixture.",
+    quantity: 1,
+    type: 42,
+  },
+];
+const invalidTypeBefore = clone(invalidLegacyType);
+const invalidTypeResult = prepareGameSave(invalidLegacyType);
+const invalidTypeIssues = failureIssues(invalidTypeResult);
+hasPath(invalidTypeIssues, "playerState.inventory.0.type");
+assert.equal(invalidTypeIssues[0].stage, "legacy_migration");
+assert.equal(invalidTypeIssues[0].operation, "migrate_legacy_item");
+assert.equal(invalidTypeIssues[0].migrationStep, "legacy_item_fields");
+assert.deepEqual(invalidLegacyType, invalidTypeBefore);
+
+const invalidLegacyDamage = clone(saveWithHistory);
+const invalidDamageSnapshot = arrayValue(
+  property(invalidLegacyDamage, "history"),
+)[0];
+objectValue(property(invalidDamageSnapshot, "playerState")).equipment = [
+  {
+    id: "invalid-damage",
+    name: "Invalid damage",
+    description: "Invalid damage fixture.",
+    quantity: 1,
+    damage: Number.POSITIVE_INFINITY,
+  },
+];
+const invalidDamageBefore = clone(invalidLegacyDamage);
+const invalidDamageResult = prepareGameSave(invalidLegacyDamage);
+hasPath(
+  failureIssues(invalidDamageResult),
+  "history.0.playerState.equipment.0.damage",
+);
+assert.deepEqual(invalidLegacyDamage, invalidDamageBefore);
 
 console.log("save migration tests passed");

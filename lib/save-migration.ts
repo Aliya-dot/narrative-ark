@@ -18,15 +18,15 @@ export interface SaveDataWarning {
 
 export interface SaveDataIssue {
   code: string;
-  stage: "final_validation";
-  operation: "validate_game_save";
+  stage: "legacy_migration" | "final_validation";
+  operation: "migrate_legacy_item" | "validate_game_save";
   path: Array<string | number>;
   pathText: string;
   message: string;
   recoverable: false;
   sourceVersion: null;
   targetVersion: null;
-  migrationStep: null;
+  migrationStep: "legacy_item_fields" | null;
 }
 
 export type SavePreparationResult =
@@ -45,13 +45,20 @@ export type SavePreparationResult =
       sourceVersion: number | null;
     };
 
-interface MigrationStageResult {
-  data: unknown;
-  migrated: boolean;
-  sourceVersion: null;
-  targetVersion: null;
-  warnings: SaveDataWarning[];
-}
+type MigrationStageResult =
+  | {
+      success: true;
+      data: unknown;
+      migrated: boolean;
+      sourceVersion: null;
+      targetVersion: null;
+      warnings: SaveDataWarning[];
+    }
+  | {
+      success: false;
+      issues: SaveDataIssue[];
+      sourceVersion: null;
+    };
 
 interface NormalizationStageResult {
   data: unknown;
@@ -59,16 +66,189 @@ interface NormalizationStageResult {
   warnings: SaveDataWarning[];
 }
 
-function migrateGameSave(input: unknown): MigrationStageResult {
-  // GameSave has no proven persistent data-schema version or historical
-  // structure that can be identified unambiguously. No migration steps are
-  // registered, and turn is gameplay state rather than a schema version.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function pathText(path: Array<string | number>) {
+  return path.length ? path.join(".") : "$";
+}
+
+function compatibilityIssue(
+  code: string,
+  path: Array<string | number>,
+  message: string,
+): SaveDataIssue {
   return {
-    data: input,
-    migrated: false,
+    code,
+    stage: "legacy_migration",
+    operation: "migrate_legacy_item",
+    path,
+    pathText: pathText(path),
+    message,
+    recoverable: false,
     sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
     targetVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
-    warnings: [],
+    migrationStep: "legacy_item_fields",
+  };
+}
+
+function warning(
+  code: string,
+  path: Array<string | number>,
+  message: string,
+): SaveDataWarning {
+  return { code, path, pathText: pathText(path), message };
+}
+
+function historicalItemDetail(key: "type" | "damage", value: unknown) {
+  if (key === "type" && typeof value === "string") {
+    return `类型：${value}`;
+  }
+  if (key === "damage" && typeof value === "number" && Number.isFinite(value)) {
+    return `伤害：${value}`;
+  }
+  return undefined;
+}
+
+function migrateItems(
+  playerState: Record<string, unknown>,
+  key: "inventory" | "equipment",
+  path: Array<string | number>,
+  warnings: SaveDataWarning[],
+  issues: SaveDataIssue[],
+) {
+  const items = playerState[key];
+  if (!Array.isArray(items)) return;
+  playerState[key] = items.map((item, index) => {
+    if (!isRecord(item)) return item;
+    const historicalKeys = (["type", "damage"] as const).filter((field) =>
+      Object.hasOwn(item, field),
+    );
+    if (!historicalKeys.length) return item;
+
+    const itemPath = [...path, key, index];
+    if (typeof item.description !== "string") {
+      issues.push(
+        compatibilityIssue(
+          "legacy_item_metadata_unmappable",
+          [...itemPath, "description"],
+          "Legacy item metadata requires a text description.",
+        ),
+      );
+      return item;
+    }
+
+    const details: string[] = [];
+    for (const field of historicalKeys) {
+      const detail = historicalItemDetail(field, item[field]);
+      if (!detail) {
+        issues.push(
+          compatibilityIssue(
+            "legacy_item_metadata_unmappable",
+            [...itemPath, field],
+            `Legacy item field "${field}" has an unsupported value.`,
+          ),
+        );
+        continue;
+      }
+      details.push(detail);
+    }
+    if (details.length !== historicalKeys.length) return item;
+
+    const migrated = { ...item };
+    delete migrated.type;
+    delete migrated.damage;
+    migrated.description = `${item.description}\n[历史属性：${details.join("；")}]`;
+    for (const field of historicalKeys) {
+      warnings.push(
+        warning(
+          "legacy_item_metadata_preserved",
+          [...itemPath, field],
+          `Legacy item field "${field}" was preserved in its description.`,
+        ),
+      );
+    }
+    return migrated;
+  });
+}
+
+function migratePlayerState(
+  value: Record<string, unknown>,
+  path: Array<string | number>,
+  warnings: SaveDataWarning[],
+  issues: SaveDataIssue[],
+) {
+  if (!isRecord(value.playerState)) return;
+  const playerStatePath = [...path, "playerState"];
+  migrateItems(
+    value.playerState,
+    "inventory",
+    playerStatePath,
+    warnings,
+    issues,
+  );
+  migrateItems(
+    value.playerState,
+    "equipment",
+    playerStatePath,
+    warnings,
+    issues,
+  );
+}
+
+function migrateGameSave(input: unknown): MigrationStageResult {
+  let data: unknown;
+  try {
+    data = structuredClone(input);
+  } catch {
+    return {
+      success: false,
+      sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+      issues: [
+        compatibilityIssue(
+          "legacy_save_not_cloneable",
+          [],
+          "Legacy save could not be copied for in-memory migration.",
+        ),
+      ],
+    };
+  }
+  if (!isRecord(data)) {
+    return {
+      success: true,
+      data,
+      migrated: false,
+      sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+      targetVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+      warnings: [],
+    };
+  }
+
+  const warnings: SaveDataWarning[] = [];
+  const issues: SaveDataIssue[] = [];
+  migratePlayerState(data, [], warnings, issues);
+  if (Array.isArray(data.history)) {
+    data.history.forEach((entry, index) => {
+      if (!isRecord(entry)) return;
+      migratePlayerState(entry, ["history", index], warnings, issues);
+    });
+  }
+  if (issues.length) {
+    return {
+      success: false,
+      sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+      issues,
+    };
+  }
+
+  return {
+    success: true,
+    data,
+    migrated: warnings.length > 0,
+    sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+    targetVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
+    warnings,
   };
 }
 
@@ -129,6 +309,13 @@ function finalValidation(
 
 export function prepareGameSave(input: unknown): SavePreparationResult {
   const migration = migrateGameSave(input);
+  if (!migration.success) {
+    return {
+      success: false,
+      issues: migration.issues,
+      sourceVersion: migration.sourceVersion,
+    };
+  }
   const normalization = normalizeGameSave(migration.data);
   const final = finalValidation(normalization.data);
 

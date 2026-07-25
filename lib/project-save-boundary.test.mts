@@ -146,6 +146,38 @@ assert.deepEqual(
   assert.equal(wroteBack, false);
   assert.deepEqual(storage.events, [`get:${b.save.id}`]);
 
+  const legacyForeign = structuredClone(b.save) as GameSave & {
+    playerState: GameSave["playerState"] & {
+      inventory: Array<
+        GameSave["playerState"]["inventory"][number] & {
+          type?: unknown;
+          damage?: unknown;
+        }
+      >;
+    };
+  };
+  legacyForeign.playerState.inventory = [
+    {
+      id: "legacy-foreign-item",
+      name: "Legacy foreign item",
+      description: "Legacy ownership fixture.",
+      quantity: 1,
+      type: "weapon",
+      damage: 4,
+    },
+  ];
+  storage.saves.set(legacyForeign.id, legacyForeign);
+  const migratedForeign = await loadProjectSave({
+    routeProjectId: a.project.id,
+    project: a.project,
+    saveId: legacyForeign.id,
+    storage,
+  });
+  assert.deepEqual(migratedForeign, {
+    ok: false,
+    code: "save_project_mismatch",
+  });
+
   storage.saves.set(a.save.id, structuredClone(a.save));
   const swapped = await loadProjectSave({
     routeProjectId: b.project.id,
@@ -194,10 +226,17 @@ assert.deepEqual(
     storage,
   });
   assert.equal(listed.ok, true);
-  if (listed.ok) assert.deepEqual(listed.value.map((save) => save.id), ["save-a"]);
+  if (listed.ok)
+    assert.deepEqual(
+      listed.value.map((save) => save.id),
+      ["save-a"],
+    );
 
   // A list item is only a hint: clicking re-reads and revalidates current storage.
-  storage.saves.set(a.save.id, { ...structuredClone(a.save), projectId: b.project.id });
+  storage.saves.set(a.save.id, {
+    ...structuredClone(a.save),
+    projectId: b.project.id,
+  });
   assert.deepEqual(
     await loadProjectSave({
       routeProjectId: a.project.id,
@@ -273,7 +312,10 @@ assert.deepEqual(
     }),
     { ok: false, code: "save_project_mismatch" },
   );
-  assert.equal((storage.saves.get(a.save.id) as GameSave).projectId, a.project.id);
+  assert.equal(
+    (storage.saves.get(a.save.id) as GameSave).projectId,
+    a.project.id,
+  );
   assert.equal(storage.events.includes(`put:${a.save.id}`), false);
 }
 
@@ -292,7 +334,10 @@ assert.deepEqual(
     }),
     { ok: false, code: "save_project_mismatch" },
   );
-  assert.equal(otherOwner.events.some((event) => event.startsWith("put:")), false);
+  assert.equal(
+    otherOwner.events.some((event) => event.startsWith("put:")),
+    false,
+  );
 
   const deleted = new MemoryStorage();
   assert.deepEqual(
