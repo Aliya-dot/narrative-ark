@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import {
-  GameProjectSchema,
-  gameProjectSchema,
-} from "./data-schemas.ts";
+import { GameProjectSchema, gameProjectSchema } from "./data-schemas.ts";
 import type {
   ProjectDataIssue,
   ProjectPreparationResult,
@@ -20,6 +17,8 @@ registerHooks({
 });
 
 const { prepareGameProject } = await import("./project-migration.ts");
+const { formatPlayProjectLoadFailure, loadProjectForPlay } =
+  await import("./play-project-loader.ts");
 const { emptyProject } = await import("./project.ts");
 
 const draft: GenerationDraft = {
@@ -125,10 +124,7 @@ assert.deepEqual(invalidLocations, invalidLocationsBefore);
 
 const missingLocations = clone(project);
 delete objectValue(property(missingLocations, "world")).locations;
-hasPath(
-  failureIssues(prepareGameProject(missingLocations)),
-  "world.locations",
-);
+hasPath(failureIssues(prepareGameProject(missingLocations)), "world.locations");
 
 const unknownFields = clone(project);
 objectValue(unknownFields).unexpectedRoot = "root-secret-not-reported";
@@ -179,9 +175,7 @@ assert.equal(gameProjectSchema.safeParse(normalizedOnce.data).success, true);
 assert.equal(Object.hasOwn(objectValue(missingRevision), "version"), false);
 assert.deepEqual(missingRevision, missingRevisionBefore);
 
-const idempotentResult = successResult(
-  prepareGameProject(normalizedOnce.data),
-);
+const idempotentResult = successResult(prepareGameProject(normalizedOnce.data));
 assert.deepEqual(idempotentResult.data, normalizedOnce.data);
 assert.equal(idempotentResult.migrated, false);
 assert.equal(idempotentResult.normalized, false);
@@ -205,5 +199,190 @@ hasPath(multipleIssues, "world.locations");
 hasPath(multipleIssues, "player.goals");
 assert.ok(multipleIssues.length >= 3);
 assert.deepEqual(prepareGameProject(multipleProblems), multipleResult);
+
+const legacyProject = clone(project);
+const legacyRoot = objectValue(legacyProject);
+const legacyPlayer = objectValue(property(legacyProject, "player"));
+legacyPlayer.age = 18;
+legacyPlayer.inventory = [
+  {
+    id: "legacy-blade",
+    name: "Old blade",
+    description: "A worn blade.",
+    quantity: 1,
+    type: "weapon",
+    damage: 5,
+  },
+];
+legacyRoot.characters = [
+  {
+    id: "legacy-character",
+    name: "Legacy character",
+    identity: "Guide",
+    age: 34,
+    race: "Human",
+    personality: "Steady",
+    appearance: "Travel clothes",
+    background: "Old format fixture",
+    abilities: ["Ash sense", "Ash sense"],
+    relationship: "Ally",
+    attitude: 10,
+    goal: "Guide the player",
+    secret: "",
+    speechStyle: "Direct",
+    important: true,
+    mortal: true,
+  },
+];
+const legacySnapshot = {
+  projectInfo: clone(legacyRoot.projectInfo),
+  world: clone(legacyRoot.world),
+  player: clone(legacyRoot.player),
+  characters: clone(legacyRoot.characters),
+  gameSystem: clone(legacyRoot.gameSystem),
+  story: clone(legacyRoot.story),
+  prompts: clone(legacyRoot.prompts),
+  openingScene: legacyRoot.openingScene,
+};
+legacyRoot.settingsVersions = [
+  {
+    id: "legacy-settings-v1",
+    projectId: legacyRoot.id,
+    versionNumber: 1,
+    createdAt: legacyRoot.createdAt,
+    updatedAt: legacyRoot.updatedAt,
+    effectiveFromTurn: 0,
+    settingsSnapshot: legacySnapshot,
+  },
+];
+legacyRoot.currentSettingsVersionId = "legacy-settings-v1";
+legacyRoot.settingsVersionNumber = 1;
+
+const legacyBefore = clone(legacyProject);
+const legacyResult = successResult(prepareGameProject(legacyProject));
+assert.equal(legacyResult.migrated, true);
+assert.equal(GameProjectSchema.safeParse(legacyResult.data).success, true);
+assert.deepEqual(legacyProject, legacyBefore);
+assert.equal(legacyResult.data.player.age, "18");
+assert.equal(legacyResult.data.characters[0].age, "34");
+assert.equal(legacyResult.data.characters[0].abilities[0].name, "Ash sense");
+assert.equal(
+  legacyResult.data.characters[0].abilities[0].description,
+  "Ash sense",
+);
+assert.notEqual(
+  legacyResult.data.characters[0].abilities[0].id,
+  legacyResult.data.characters[0].abilities[1].id,
+);
+assert.equal(
+  legacyResult.data.characters[0].abilities[0].id,
+  successResult(prepareGameProject(legacyProject)).data.characters[0]
+    .abilities[0].id,
+);
+assert.match(
+  legacyResult.data.player.inventory[0].description,
+  /类型：weapon.*伤害：5/s,
+);
+assert.equal(
+  Object.hasOwn(
+    legacyResult.data.player.inventory[0] as unknown as object,
+    "type",
+  ),
+  false,
+);
+assert.equal(
+  legacyResult.data.settingsVersions?.[0].settingsSnapshot.player.age,
+  "18",
+);
+assert.equal(
+  legacyResult.data.settingsVersions?.[0].settingsSnapshot.characters[0]
+    .abilities[0].description,
+  "Ash sense",
+);
+const legacyAgain = successResult(prepareGameProject(legacyResult.data));
+assert.deepEqual(legacyAgain.data, legacyResult.data);
+assert.equal(legacyAgain.migrated, false);
+
+const unsupportedLegacyItem = clone(project);
+objectValue(property(unsupportedLegacyItem, "player")).inventory = [
+  {
+    id: "unsafe-item",
+    name: "Unsafe item",
+    description: "Unsupported metadata fixture",
+    quantity: 1,
+    damage: { dice: "1d6" },
+  },
+];
+const unsupportedResult = prepareGameProject(unsupportedLegacyItem);
+assert.equal(unsupportedResult.success, false);
+if (!unsupportedResult.success) {
+  assert.equal(unsupportedResult.code, "legacy_project_incompatible");
+  hasPath(unsupportedResult.issues, "player.inventory.0.damage");
+}
+
+const schemaInvalidProject = clone(project);
+delete objectValue(property(schemaInvalidProject, "world")).locations;
+const schemaInvalidResult = prepareGameProject(schemaInvalidProject);
+assert.equal(schemaInvalidResult.success, false);
+if (!schemaInvalidResult.success) {
+  assert.equal(schemaInvalidResult.code, "project_schema_invalid");
+}
+
+const missingLoad = await loadProjectForPlay({
+  routeProjectId: "missing-project",
+  readProject: async () => undefined,
+});
+assert.deepEqual(missingLoad, { ok: false, code: "project_not_found" });
+assert.equal(
+  formatPlayProjectLoadFailure("project_not_found"),
+  "项目记录不存在。",
+);
+assert.equal(
+  formatPlayProjectLoadFailure("legacy_project_incompatible"),
+  "历史项目无法兼容迁移。",
+);
+assert.equal(
+  formatPlayProjectLoadFailure("project_schema_invalid"),
+  "项目结构校验失败。",
+);
+
+const incompatibleLoad = await loadProjectForPlay({
+  routeProjectId: String(property(unsupportedLegacyItem, "id")),
+  readProject: async () => unsupportedLegacyItem,
+});
+assert.equal(incompatibleLoad.ok, false);
+if (!incompatibleLoad.ok) {
+  assert.equal(incompatibleLoad.code, "legacy_project_incompatible");
+}
+
+const invalidLoad = await loadProjectForPlay({
+  routeProjectId: String(property(schemaInvalidProject, "id")),
+  readProject: async () => schemaInvalidProject,
+});
+assert.equal(invalidLoad.ok, false);
+if (!invalidLoad.ok) {
+  assert.equal(invalidLoad.code, "project_schema_invalid");
+}
+
+const routeMismatchLoad = await loadProjectForPlay({
+  routeProjectId: "different-route-project",
+  readProject: async () => project,
+});
+assert.deepEqual(routeMismatchLoad, {
+  ok: false,
+  code: "project_route_mismatch",
+});
+
+let projectReadCount = 0;
+const successfulLoad = await loadProjectForPlay({
+  routeProjectId: legacyResult.data.id,
+  readProject: async () => {
+    projectReadCount += 1;
+    return legacyProject;
+  },
+});
+assert.equal(successfulLoad.ok, true);
+assert.equal(projectReadCount, 1);
+assert.deepEqual(legacyProject, legacyBefore);
 
 console.log("project migration tests passed");

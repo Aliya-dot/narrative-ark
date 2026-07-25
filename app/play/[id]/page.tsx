@@ -78,7 +78,10 @@ import {
   updateProjectSave,
 } from "@/lib/project-save-boundary";
 import { projectSaveStorage } from "@/lib/project-save-storage";
-import { prepareGameProject } from "@/lib/project-migration";
+import {
+  formatPlayProjectLoadFailure,
+  loadProjectForPlay,
+} from "@/lib/play-project-loader";
 export default function Play() {
   const { id } = useParams<{ id: string }>();
   const [p, setP] = useState<GameProject | null>();
@@ -170,22 +173,19 @@ export default function Play() {
     (async () => {
       setLoadError("");
       try {
-        const storedProject = await db.projects.get(id);
-        const preparedProject = storedProject
-          ? prepareGameProject(storedProject)
-          : undefined;
-        const project =
-          preparedProject?.success === true
-            ? ensureSettingsVersions(preparedProject.data)
-            : undefined;
-        if (project && project !== storedProject) await db.projects.put(project);
-        setP(project ?? null);
+        const loadedProject = await loadProjectForPlay({
+          routeProjectId: id,
+          readProject: (projectId) => db.projects.get(projectId),
+        });
         setConfig(await db.configs.get("active"));
-        if (!project) {
+        if (!loadedProject.ok) {
+          setP(null);
           setS(null);
-          setLoadError("项目不存在或当前地址已失效。");
+          setLoadError(formatPlayProjectLoadFailure(loadedProject.code));
           return;
         }
+        const project = loadedProject.value;
+        setP(project);
 
         const wanted = new URLSearchParams(location.search).get("save");
         let loaded;
