@@ -3,9 +3,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  BookOpenText,
+  DoorOpen,
   KeyRound,
+  Leaf,
   Play,
-  Plus,
+  Sprout,
   Upload,
   Waypoints,
 } from "lucide-react";
@@ -88,29 +91,32 @@ export default function Home() {
   }
   return (
     <>
-      <section className="container grid min-h-[68vh] items-center gap-12 py-16 lg:grid-cols-[1.1fr_.9fr]">
-        <div className="reveal">
-          <p className="mono gold text-xs tracking-[.25em]">
-            AI NARRATIVE WORKSHOP
-          </p>
-          <h1 className="display mt-6 max-w-3xl text-5xl leading-[1.15] md:text-7xl">
+      <section className="home-hero">
+        <div aria-hidden="true" className="home-hero-botanical">
+          <Leaf />
+          <Leaf />
+          <Leaf />
+        </div>
+        <div className="home-hero-copy reveal">
+          <p className="home-hero-kicker mono gold">AI NARRATIVE WORKSHOP</p>
+          <h1 className="home-hero-title display">
             输入一个想法，
             <br />
             创造属于你的
             <br />
             <i className="font-normal gold">文字冒险世界</i>
           </h1>
-          <p className="muted mt-7 max-w-xl text-base leading-8">
+          <p className="home-hero-description muted">
             从世界规则到角色记忆，从第一幕到长期存档。叙界把灵感整理成一套真正可以持续游玩的冒险。
           </p>
-          <div className="mt-9 flex flex-wrap gap-3">
-            <Link className="btn btn-primary px-6" href="/create">
-              <Plus size={17} />
+          <div className="home-hero-actions">
+            <Link className="btn btn-primary home-hero-action" href="/create">
+              <Sprout size={17} />
               创建文游
             </Link>
             {last ? (
               <Link
-                className="btn px-6"
+                className="btn home-hero-action"
                 href={`/play/${last.projectId}?save=${last.id}`}
               >
                 <Play size={16} />
@@ -125,13 +131,13 @@ export default function Home() {
                 </span>
               </Link>
             ) : (
-              <button className="btn" disabled>
+              <button className="btn home-hero-action" disabled>
                 <Play size={16} />
                 暂无存档
               </button>
             )}
             <button
-              className="btn muted"
+              className="btn home-hero-action muted"
               onClick={() => input.current?.click()}
             >
               <Upload size={16} />
@@ -146,23 +152,33 @@ export default function Home() {
             />
           </div>
         </div>
-        <div className="relative hidden min-h-96 lg:block">
-          <div className="absolute left-10 top-8 h-[320px] w-px bg-[var(--line)]" />
-          <div className="absolute left-[35px] top-7 h-3 w-3 rounded-full border border-[#b89b62] bg-[var(--ink)]" />
-          <div className="absolute left-[35px] top-[165px] h-3 w-3 rounded-full border border-[#8ca9b8] bg-[var(--ink)]" />
-          <div className="absolute left-[35px] bottom-9 h-3 w-3 rounded-full bg-[#b89b62]" />
-          <div className="ml-20 space-y-9">
-            <div className="panel p-5">
-              <small className="mono muted">01 · DEFINE</small>
-              <p className="display mt-2 text-xl">定下世界的第一条规则</p>
+        <div className="home-journey" aria-label="叙界创作流程">
+          <div aria-hidden="true" className="home-journey-line">
+            <i />
+            <i />
+            <i />
+          </div>
+          <div className="home-journey-cards">
+            <div className="home-journey-card panel">
+              <div>
+                <small className="mono muted">01 · DEFINE</small>
+                <p className="display">定下世界的第一条规则</p>
+              </div>
+              <Sprout aria-hidden="true" />
             </div>
-            <div className="panel ml-10 p-5">
-              <small className="mono muted">02 · REMEMBER</small>
-              <p className="display mt-2 text-xl">让角色记住每一次选择</p>
+            <div className="home-journey-card panel">
+              <div>
+                <small className="mono muted">02 · REMEMBER</small>
+                <p className="display">让角色记住每一次选择</p>
+              </div>
+              <BookOpenText aria-hidden="true" />
             </div>
-            <div className="panel p-5">
-              <small className="mono muted">03 · CONTINUE</small>
-              <p className="display mt-2 text-xl">离开以后，世界仍在等待</p>
+            <div className="home-journey-card panel">
+              <div>
+                <small className="mono muted">03 · CONTINUE</small>
+                <p className="display">离开以后，世界仍在等待</p>
+              </div>
+              <DoorOpen aria-hidden="true" />
             </div>
           </div>
         </div>

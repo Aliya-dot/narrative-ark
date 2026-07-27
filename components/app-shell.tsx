@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { BookOpen, Feather, Library, Settings } from "lucide-react";
+import { BookOpen, Library, PenTool, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { ThemePicker } from "@/components/theme-picker";
 
@@ -8,10 +8,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <header className="sticky top-0 z-50 border-b hairline bg-[color-mix(in_srgb,var(--ink)_92%,transparent)] backdrop-blur-xl">
-        <div className="container flex h-16 items-center justify-between">
+        <div className="app-header-container flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
-            <span className="brand-mark grid h-9 w-9 place-items-center rounded-full border hairline">
-              <Feather size={17} className="gold" />
+            <span className="brand-mark grid h-10 w-10 place-items-center">
+              <PenTool size={21} />
             </span>
             <span>
               <b className="display tracking-[.18em]">叙界</b>
