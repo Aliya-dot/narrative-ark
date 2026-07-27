@@ -23,7 +23,8 @@
     "test:generated-project-finalization": "node --no-warnings --experimental-strip-types lib/generated-project-finalization.test.mts",
     "test:generated-project-draft-recovery": "node --no-warnings --experimental-strip-types lib/generated-project-draft-recovery.test.mts",
     "test:editor-project-save": "node --no-warnings --experimental-strip-types lib/editor-project-save.test.mts",
-    "test:project-list-loading": "node --no-warnings --experimental-strip-types lib/project-list-loader.test.mts"
+    "test:project-list-loading": "node --no-warnings --experimental-strip-types lib/project-list-loader.test.mts",
+    "test:worldbook-publish": "node --no-warnings --experimental-strip-types lib/world-book-publish-boundary.test.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",

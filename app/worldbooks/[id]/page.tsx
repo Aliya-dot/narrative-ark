@@ -32,12 +32,10 @@ import type {
   WorldBookEntryActivationMode,
   WorldBookEntryCategory,
   WorldBookEditorMode,
-  WorldBookVersion,
 } from "@/lib/types";
 import type { GeneratedWorldBookDraft } from "@/lib/world-book-ai";
 import { generatedDraftToEntries } from "@/lib/world-book-ai";
 import {
-  createNextWorldBookVersion,
   createWorldBook,
   createWorldBookEntry,
   estimateWorldBookTokens,
@@ -69,6 +67,13 @@ import {
   updateWorldBookTriggerValues,
   WORLD_BOOK_TRIGGER_SOURCE_LABELS,
 } from "@/lib/world-book-triggers";
+import {
+  cleanupPublishedWorldBookDraft,
+  formatWorldBookPublishFailure,
+  publishWorldBook,
+  type WorldBookRevision,
+} from "@/lib/world-book-publish-boundary";
+import { worldBookPublishStorage } from "@/lib/world-book-publish-storage";
 
 type AiStudioMode = "full" | "fill" | "category" | "entry";
 type UndoSnapshot = {
@@ -139,6 +144,7 @@ export default function WorldBookEditorPage() {
   >("all");
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const [formalRevision, setFormalRevision] = useState<WorldBookRevision>();
   const [draftStatus, setDraftStatus] = useState<DraftStatus>("clean");
   const [dialogAction, setDialogAction] = useState<"save" | "create" | null>(
     null,
@@ -195,6 +201,10 @@ export default function WorldBookEditorPage() {
             const normalized = normalizeEntryCollection(extracted.entries);
             setEntries(normalized.entries);
             setSelectedId(normalized.entries[0]?.id || "");
+            setFormalRevision({
+              currentVersionId: null,
+              versionNumber: 0,
+            });
             hydrated.current = true;
             setLoading(false);
             return;
@@ -214,6 +224,10 @@ export default function WorldBookEditorPage() {
               ? value.selectedId
               : normalized.entries[0]?.id || "",
           );
+          setFormalRevision({
+            currentVersionId: null,
+            versionNumber: 0,
+          });
           if (normalized.repairs.length)
             toast.warning(
               `已修复 ${normalized.repairs.length} 张重复 ID 的资料卡，内容没有被删除`,
@@ -222,6 +236,10 @@ export default function WorldBookEditorPage() {
           const created = createWorldBook(uid("world"));
           setBook(created.book);
           setEntries([]);
+          setFormalRevision({
+            currentVersionId: null,
+            versionNumber: 0,
+          });
         }
         hydrated.current = true;
         setLoading(false);
@@ -237,6 +255,10 @@ export default function WorldBookEditorPage() {
         router.replace("/worldbooks");
         return;
       }
+      setFormalRevision({
+        currentVersionId: storedBook.currentVersionId,
+        versionNumber: storedBook.versionNumber,
+      });
       const value = storedDraft?.value as DraftValue | undefined;
       if (value?.kind === "world-book-editor-v1" && value.book.id === id) {
         const normalized = normalizeEntryCollection(value.entries);
@@ -623,102 +645,49 @@ export default function WorldBookEditorPage() {
   }
 
   async function publish() {
-    if (!book || hasErrors) return;
+    if (!book || !formalRevision || hasErrors) return;
     setPublishing(true);
     try {
       const now = new Date().toISOString();
-      const cleanEntries = ensureUniqueWorldBookEntryIds(
-        entries.map((entry) =>
-          normalizeWorldBookEntry({
-            ...entry,
-            worldBookId: book.id,
-            updatedAt: entry.updatedAt || now,
-          }),
-        ),
-      ).entries;
-      const existing = await db.worldBooks.get(book.id);
-      let nextBook: WorldBook = {
-        ...book,
-        entryIds: cleanEntries.map((entry) => entry.id),
-        updatedAt: now,
-      };
-      let version: WorldBookVersion | undefined;
-      if (!existing) {
-        version = {
-          id: nextBook.currentVersionId,
-          worldBookId: nextBook.id,
-          versionNumber: 1,
-          note: versionNote.trim() || "创建世界书",
-          createdAt: now,
-          snapshot: {
-            coreSummary: nextBook.coreSummary,
-            entries: structuredClone(cleanEntries),
-          },
-        };
-      } else {
-        const currentVersion = await db.worldBookVersions.get(
-          existing.currentVersionId,
-        );
-        const changed =
-          !currentVersion ||
-          JSON.stringify({
-            coreSummary: nextBook.coreSummary,
-            entries: cleanEntries,
-          }) !== JSON.stringify(currentVersion.snapshot);
-        if (changed) {
-          const next = createNextWorldBookVersion(
-            { ...nextBook, status: "published" },
-            cleanEntries,
-            versionNote.trim() || "发布世界书更新",
-          );
-          nextBook = {
-            ...next.book,
-            status: "published",
-            coreSummaryStatus: nextBook.coreSummary ? "current" : "empty",
-          };
-          version = next.version;
-        } else nextBook = { ...nextBook, status: existing.status };
-      }
-      await db.transaction(
-        "rw",
-        db.worldBooks,
-        db.worldBookEntries,
-        db.worldBookVersions,
-        async () => {
-          const storedIds = existing
-            ? ((await db.worldBookEntries
-                .where("worldBookId")
-                .equals(book.id)
-                .primaryKeys()) as string[])
-            : [];
-          const currentIds = new Set(cleanEntries.map((entry) => entry.id));
-          await db.worldBookEntries.bulkDelete(
-            storedIds.filter((entryId) => !currentIds.has(entryId)),
-          );
-          if (cleanEntries.length)
-            await db.worldBookEntries.bulkPut(cleanEntries);
-          await db.worldBooks.put(nextBook);
-          if (version) await db.worldBookVersions.put(version);
-        },
+      const cleanEntries = entries.map((entry) =>
+        normalizeWorldBookEntry({
+          ...entry,
+          updatedAt: entry.updatedAt || now,
+        }),
       );
-      await db.drafts.delete(draftKey);
+      const result = await publishWorldBook({
+        worldBookId: book.id,
+        expectedRevision: formalRevision,
+        candidateBook: book,
+        candidateEntries: cleanEntries,
+        note: versionNote,
+        storage: worldBookPublishStorage,
+      });
+      if (!result.ok) {
+        toast.error(formatWorldBookPublishFailure(result));
+        return;
+      }
       hydrated.current = false;
-      setBook(nextBook);
-      setEntries(cleanEntries);
-      setDraftStatus("clean");
+      setBook(result.book);
+      setEntries(result.entries);
+      setFormalRevision(result.revision);
+      const cleanup = await cleanupPublishedWorldBookDraft(() =>
+        db.drafts.delete(draftKey),
+      );
+      setDraftStatus(cleanup === "clean" ? "clean" : "saved");
       window.setTimeout(() => {
         hydrated.current = true;
       }, 0);
-      toast.success(
-        existing && version
-          ? `已发布版本 V${version.versionNumber}，已有游戏不会自动升级`
-          : existing
-            ? "没有需要发布的内容"
-            : "世界书已保存为 V1 草稿",
-      );
+      if (cleanup === "failed") {
+        toast.warning("世界书已发布，但本地编辑草稿清理失败。");
+      } else {
+        toast.success(
+          `已发布版本 V${result.version.versionNumber}，已有游戏不会自动升级`,
+        );
+      }
       setDialogAction(null);
       setVersionNote("");
-      if (id === "new") router.replace(`/worldbooks/${nextBook.id}`);
+      if (id === "new") router.replace(`/worldbooks/${result.book.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败");
     } finally {
