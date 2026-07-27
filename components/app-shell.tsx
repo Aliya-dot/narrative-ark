@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { BookOpen, Library, Settings } from "lucide-react";
+import { BookOpen, Feather, Library, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { ThemePicker } from "@/components/theme-picker";
 
@@ -27,7 +27,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="app-header-container flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <span className="brand-mark grid h-10 w-10 place-items-center">
-              <BrandMark />
+              <Feather className="brand-mark-base" size={17} />
+              <span className="brand-mark-mint">
+                <BrandMark />
+              </span>
             </span>
             <span>
               <b className="display tracking-[.18em]">叙界</b>

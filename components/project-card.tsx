@@ -42,7 +42,9 @@ export function ProjectCard({
           </span>
           <span>{length.label}篇</span>
         </div>
-        <p className="sr-only">{project.projectInfo.description}</p>
+        <p className="home-project-description muted">
+          {project.projectInfo.description}
+        </p>
         <div className="home-project-meta muted">
           <span>{save ? `最新回合：第 ${save.turn} 回合` : "尚未开始"}</span>
           <time
