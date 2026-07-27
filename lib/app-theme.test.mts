@@ -13,6 +13,7 @@ assert.deepEqual(
     ["dark", "深色"],
     ["light", "浅色"],
     ["mint", "青柠薄荷"],
+    ["celadon", "雾海青瓷"],
   ],
 );
 assert.equal(new Set(APP_THEMES.map(({ id }) => id)).size, APP_THEMES.length);
@@ -24,6 +25,7 @@ assert.equal(
 assert.equal(resolveAppTheme("dark"), "dark");
 assert.equal(resolveAppTheme("light"), "light");
 assert.equal(resolveAppTheme("mint"), "mint");
+assert.equal(resolveAppTheme("celadon"), "celadon");
 assert.equal(resolveAppTheme(null), DEFAULT_APP_THEME);
 assert.equal(resolveAppTheme("unknown-theme"), DEFAULT_APP_THEME);
 

@@ -4,6 +4,7 @@ export const APP_THEMES = [
   { id: "dark", label: "深色" },
   { id: "light", label: "浅色" },
   { id: "mint", label: "青柠薄荷" },
+  { id: "celadon", label: "雾海青瓷" },
 ] as const;
 
 export type AppThemeId = (typeof APP_THEMES)[number]["id"];
