@@ -10,16 +10,15 @@ import {
   Waypoints,
 } from "lucide-react";
 import { db } from "@/lib/db";
-import { SAMPLE_PROJECT } from "@/lib/sample";
 import type { AIConfig, GameProject, GameSave } from "@/lib/types";
 import { ProjectCard } from "@/components/project-card";
 import { ConfirmDialog, EmptyState, LoadingState } from "@/components/common";
 import { toast } from "sonner";
-import { ensureSettingsVersions } from "@/lib/settings-version";
 import {
   executeProjectImport,
   formatProjectImportFailure,
 } from "@/lib/project-import-workflow";
+import { loadProjectList } from "@/lib/project-list-loader";
 import { resolveSaveForProject } from "@/lib/project-save-boundary";
 export default function Home() {
   const [projects, setProjects] = useState<GameProject[] | null>(null);
@@ -31,17 +30,16 @@ export default function Home() {
   const [del, setDel] = useState<GameProject>();
   const input = useRef<HTMLInputElement>(null);
   async function load() {
-    let ps = await db.projects.orderBy("updatedAt").reverse().toArray();
-    if (!ps.length) {
-      await db.projects.put(SAMPLE_PROJECT);
-      ps = [SAMPLE_PROJECT];
-    }
-    const normalizedProjects = ps.map(ensureSettingsVersions);
-    if (normalizedProjects.some((project, index) => project !== ps[index])) {
-      await db.projects.bulkPut(normalizedProjects);
-    }
-    ps = normalizedProjects;
+    const result = await loadProjectList(() =>
+      db.projects.orderBy("updatedAt").reverse().toArray(),
+    );
+    const ps = result.projects;
     setProjects(ps);
+    if (result.failures.length > 0) {
+      toast.error(
+        `有 ${result.failures.length} 个项目数据不兼容，已跳过显示。`,
+      );
+    }
     setConfig(await db.configs.get("active"));
     const rawSaves = await db.saves.orderBy("updatedAt").reverse().toArray();
     const projectById = new Map(ps.map((project) => [project.id, project]));
