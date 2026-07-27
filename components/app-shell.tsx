@@ -1,34 +1,10 @@
 "use client";
 import Link from "next/link";
-import { BookOpen, Feather, Library, Settings, SunMoon } from "lucide-react";
+import { BookOpen, Feather, Library, Settings } from "lucide-react";
 import { Toaster } from "sonner";
-import { useEffect, useState } from "react";
-import {
-  APP_THEME_STORAGE_KEY,
-  DEFAULT_APP_THEME,
-  nextAppTheme,
-  resolveAppTheme,
-  type AppThemeId,
-} from "@/lib/app-theme";
+import { ThemePicker } from "@/components/theme-picker";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<AppThemeId>(DEFAULT_APP_THEME);
-
-  useEffect(() => {
-    const storedTheme = resolveAppTheme(
-      localStorage.getItem(APP_THEME_STORAGE_KEY),
-    );
-    setTheme(storedTheme);
-    document.documentElement.dataset.theme = storedTheme;
-  }, []);
-
-  function toggle() {
-    const nextTheme = nextAppTheme(theme);
-    setTheme(nextTheme);
-    localStorage.setItem(APP_THEME_STORAGE_KEY, nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-  }
-
   return (
     <>
       <header className="sticky top-0 z-50 border-b hairline bg-[color-mix(in_srgb,var(--ink)_92%,transparent)] backdrop-blur-xl">
@@ -70,13 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className="mx-1 hidden h-6 w-px bg-[var(--line)] sm:block"
             />
             <div className="flex items-center gap-1" id="app-shell-actions" />
-            <button
-              aria-label="切换主题"
-              className="btn icon-btn border-transparent bg-transparent"
-              onClick={toggle}
-            >
-              <SunMoon size={17} />
-            </button>
+            <ThemePicker />
           </nav>
         </div>
       </header>
