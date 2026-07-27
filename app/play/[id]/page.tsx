@@ -59,11 +59,9 @@ import {
   readableParagraphs,
   summaryParagraphs,
 } from "@/lib/text";
+import { displayLocationName } from "@/lib/location-label";
 import { ensureSettingsVersions } from "@/lib/settings-version";
-import {
-  chapterForTurn,
-  storyPacing,
-} from "@/lib/story-length";
+import { chapterForTurn, storyPacing } from "@/lib/story-length";
 import {
   buildWorldBookRetrievalContext,
   retrieveWorldBookContext,
@@ -490,9 +488,12 @@ export default function Play() {
     id: string;
     text: string;
   }[];
-  const currentLocation =
-    p.world.locations.find((x) => x.id === s.currentLocationId)?.name ||
-    s.currentLocationId;
+  const currentLocation = displayLocationName(
+    s.currentLocationId,
+    p.world.locations,
+  );
+  const locationIdTitle =
+    currentLocation === s.currentLocationId ? undefined : s.currentLocationId;
   const pacing = storyPacing(p.projectInfo.gameLength, s.turn);
   const currentChapter = chapterForTurn(p, s);
   const worldTheme = getWorldTheme(p.projectInfo.genre);
@@ -514,6 +515,12 @@ export default function Play() {
     { title: "技能", items: p.player.skills.map((item) => item.name) },
     { title: "当前任务", items: s.activeQuests.map((item) => item.title) },
   ].filter((section) => section.items.length > 0);
+  const worldTabs = [
+    ["memory", "记忆"],
+    ["people", "人物"],
+    ["tasks", "任务"],
+    ...(p.worldBinding ? ([["book", "世界书"]] as const) : []),
+  ] as const;
   const showLeft = leftOpen && !immersive;
   const showRight = rightOpen && !immersive;
   const playGridColumns =
@@ -604,7 +611,8 @@ export default function Play() {
           </h1>
           <p className="muted mt-0.5 truncate text-xs md:text-sm">
             第 {s.turn} 回合 · {currentChapter.title} · {pacing.phase} ·{" "}
-            {currentLocation} · {s.currentTime}
+            <span title={locationIdTitle}>{currentLocation}</span> ·{" "}
+            {s.currentTime}
             {pacing.exceeded ? " · 已超出建议范围，剧情将逐步收束" : ""}
           </p>
         </div>
@@ -682,7 +690,11 @@ export default function Play() {
           </h2>
           <p className="muted mt-1 text-sm">{p.player.identity}</p>
           <dl className="mt-4 space-y-3 border-y hairline py-3">
-            <PlayerContextStat label="当前位置" value={currentLocation} />
+            <PlayerContextStat
+              label="当前位置"
+              value={currentLocation}
+              title={locationIdTitle}
+            />
             <PlayerContextStat label="当前时间" value={s.currentTime} />
           </dl>
           {!!Object.keys(s.playerState.attributes).length && (
@@ -877,7 +889,7 @@ export default function Play() {
         >
           <div className="flex shrink-0 items-center gap-1 border-b hairline p-2">
             <button
-              className="btn icon-btn mr-1 hidden border-transparent bg-transparent xl:inline-flex"
+              className="btn icon-btn hidden shrink-0 border-transparent bg-transparent xl:inline-flex"
               onClick={() => updateSidebars(leftOpen, false)}
               title="收起世界信息栏"
               aria-label="收起右侧世界信息栏"
@@ -885,31 +897,20 @@ export default function Play() {
             >
               <ChevronRight size={18} />
             </button>
-            {(
-              [
-                ["memory", "记忆"],
-                ["people", "人物"],
-                ["tasks", "任务"],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                className={`min-w-0 flex-1 rounded-md px-2 py-2 text-xs transition-colors ${worldTab === key ? "bg-[var(--panel2)] gold" : "muted hover:text-[var(--paper)]"}`}
-                onClick={() => setWorldTab(key)}
-                aria-pressed={worldTab === key}
-              >
-                {label}
-              </button>
-            ))}
-            {p.worldBinding && (
-              <button
-                className={`min-w-0 flex-1 rounded-md px-2 py-2 text-xs transition-colors ${worldTab === "book" ? "bg-[var(--panel2)] gold" : "muted hover:text-[var(--paper)]"}`}
-                onClick={() => setWorldTab("book")}
-                aria-pressed={worldTab === "book"}
-              >
-                世界书
-              </button>
-            )}
+            <div
+              className={`grid min-w-0 flex-1 gap-1 ${worldTabs.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}
+            >
+              {worldTabs.map(([key, label]) => (
+                <button
+                  key={key}
+                  className={`min-w-0 whitespace-nowrap rounded-md px-1 py-2 text-xs transition-colors ${worldTab === key ? "bg-[var(--panel2)] gold" : "muted hover:text-[var(--paper)]"}`}
+                  onClick={() => setWorldTab(key)}
+                  aria-pressed={worldTab === key}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div
             className={`${worldTab === "memory" ? "scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
@@ -1095,14 +1096,19 @@ export default function Play() {
 function PlayerContextStat({
   label,
   value,
+  title,
 }: {
   label: string;
   value: string;
+  title?: string;
 }) {
   return (
     <div className="min-w-0">
       <dt className="muted text-[11px]">{label}</dt>
-      <dd className="mt-1 min-w-0 break-words text-sm leading-5 font-medium">
+      <dd
+        className="mt-1 min-w-0 break-words text-sm leading-5 font-medium"
+        title={title}
+      >
         {value}
       </dd>
     </div>
