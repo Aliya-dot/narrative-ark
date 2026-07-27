@@ -40,7 +40,12 @@ import {
   settingsSnapshot,
   type SettingsRisk,
 } from "@/lib/settings-version";
-import { saveEditorProject } from "@/lib/editor-project-save";
+import {
+  formatEditorProjectSaveFailure,
+  saveEditorProject,
+} from "@/lib/editor-project-save";
+import { editorProjectStorage } from "@/lib/editor-project-storage";
+import { validateProjectIntegrity } from "@/lib/project-integrity";
 import { formatProjectIntegrityFailure } from "@/lib/project-integrity-summary";
 import { listProjectSaves } from "@/lib/project-save-boundary";
 import { projectSaveStorage } from "@/lib/project-save-storage";
@@ -131,15 +136,18 @@ export default function Editor() {
         note || `更新${labels[changedKey]}`,
       );
       const result = await saveEditorProject({
+        routeProjectId: id,
+        expectedVersion: p.version,
         project: next,
-        saveProject: (project) => db.projects.put(project),
+        storage: editorProjectStorage,
       });
       if (!result.ok) {
-        toast.error(formatProjectIntegrityFailure(result.issues));
+        toast.error(formatEditorProjectSaveFailure(result));
         return false;
       }
-      setP(next);
-      const nextValue = structuredClone(next[changedKey]);
+      const saved = result.value;
+      setP(saved);
+      const nextValue = structuredClone(saved[changedKey]);
       if (changedKey === key) {
         setValue(nextValue);
         setText(
@@ -152,8 +160,8 @@ export default function Editor() {
       setPendingSave(undefined);
       toast.success(
         gameStarted
-          ? `设定版本 ${next.settingsVersionNumber} 已保存，将从第 ${currentTurn + 1} 回合开始生效`
-          : `设定版本 ${next.settingsVersionNumber} 已保存，将用于游戏开局`,
+          ? `设定版本 ${saved.settingsVersionNumber} 已保存，将从第 ${currentTurn + 1} 回合开始生效`
+          : `设定版本 ${saved.settingsVersionNumber} 已保存，将用于游戏开局`,
       );
       return true;
     } catch (error) {
@@ -261,14 +269,12 @@ export default function Editor() {
     };
     const duplicate = ensureSettingsVersions(raw);
     try {
-      const result = await saveEditorProject({
-        project: duplicate,
-        saveProject: (project) => db.projects.put(project),
-      });
-      if (!result.ok) {
-        toast.error(formatProjectIntegrityFailure(result.issues));
+      const issues = validateProjectIntegrity(duplicate);
+      if (issues.length > 0) {
+        toast.error(formatProjectIntegrityFailure(issues));
         return;
       }
+      await db.projects.put(duplicate);
       toast.success("已复制为新项目，原项目和存档保持不变");
       window.location.href = `/editor/${duplicate.id}`;
     } catch (error) {

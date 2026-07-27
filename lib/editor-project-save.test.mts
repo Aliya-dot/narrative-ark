@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import type {
+  EditorProjectRecordStore,
+  EditorProjectStorage,
+} from "./editor-project-save.ts";
+import type {
   GameProject,
   GenerationDraft,
   ProjectSettingsSnapshot,
@@ -16,20 +20,22 @@ registerHooks({
   },
 });
 
-const [{ saveEditorProject }, { emptyProject }, settingsVersion, summary] =
-  await Promise.all([
-    import("./editor-project-save.ts"),
-    import("./project.ts"),
-    import("./settings-version.ts"),
-    import("./project-integrity-summary.ts"),
-  ]);
-
-const {
-  createSettingsVersion,
-  ensureSettingsVersions,
-  settingsSnapshot,
-} = settingsVersion;
-const { formatProjectIntegrityFailure } = summary;
+const [
+  {
+    formatEditorProjectSaveFailure,
+    saveEditorProject,
+  },
+  { emptyProject },
+  {
+    createSettingsVersion,
+    ensureSettingsVersions,
+    settingsSnapshot,
+  },
+] = await Promise.all([
+  import("./editor-project-save.ts"),
+  import("./project.ts"),
+  import("./settings-version.ts"),
+]);
 
 const draft: GenerationDraft = {
   title: "Editor save fixture",
@@ -43,9 +49,9 @@ const draft: GenerationDraft = {
   creationMode: "advanced",
 };
 
-function fixture(): GameProject {
+function fixture(id = "editor-project"): GameProject {
   const project = emptyProject(draft);
-  project.id = "editor-project";
+  project.id = id;
   project.createdAt = "2026-01-01T00:00:00.000Z";
   project.updatedAt = project.createdAt;
   project.world.locations = [
@@ -65,254 +71,331 @@ function fixture(): GameProject {
   return ensureSettingsVersions(project);
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value)) deepFreeze(child);
-  }
-  return value;
-}
-
-let checks = 0;
-async function check(name: string, run: () => Promise<void>): Promise<void> {
-  await run();
-  checks += 1;
-  console.log(`ok ${checks} - ${name}`);
-}
-
-await check("a deeply frozen legal final project is saved once unchanged", async () => {
-  const project = deepFreeze(fixture());
-  const before = structuredClone(project);
-  const saved: GameProject[] = [];
-
-  const result = await saveEditorProject({
-    project,
-    async saveProject(nextProject) {
-      saved.push(nextProject);
-    },
-  });
-
-  assert.deepEqual(result, { ok: true });
-  assert.deepEqual(saved, [project]);
-  assert.equal(saved[0], project);
-  assert.deepEqual(project, before);
-});
-
-await check("duplicate entity IDs block persistence without mutation", async () => {
-  const project = fixture();
-  project.world.locations[1].id = "station";
-  const before = structuredClone(project);
-  let writes = 0;
-
-  const result = await saveEditorProject({
-    project,
-    saveProject() {
-      writes += 1;
-    },
-  });
-
-  assert.equal(result.ok, false);
-  if (result.ok) assert.fail("expected integrity failure");
-  assert.equal(result.reason, "integrity");
-  assert.ok(
-    result.issues.some(
-      (issue) =>
-        issue.code === "duplicate_entity_id" &&
-        issue.path === "world.locations[1].id",
-    ),
-  );
-  assert.equal(writes, 0);
-  assert.deepEqual(project, before);
-});
-
-await check("dangling references report an exact path and block persistence", async () => {
-  const project = deepFreeze({
-    ...fixture(),
-    world: {
-      ...fixture().world,
-      locations: fixture().world.locations.map((location, index) =>
-        index === 0
-          ? { ...location, connections: ["missing-location"] }
-          : location,
-      ),
-    },
-  });
-  let writes = 0;
-
-  const result = await saveEditorProject({
-    project,
-    saveProject() {
-      writes += 1;
-    },
-  });
-
-  assert.equal(result.ok, false);
-  if (result.ok) assert.fail("expected integrity failure");
-  assert.ok(
-    result.issues.some(
-      (issue) =>
-        issue.code === "dangling_reference" &&
-        issue.path === "world.locations[0].connections[0]" &&
-        issue.relatedId === "missing-location",
-    ),
-  );
-  assert.equal(writes, 0);
-});
-
-await check("storage errors propagate unchanged after one write attempt", async () => {
-  const project = fixture();
-  const before = structuredClone(project);
-  const storageError = new Error("storage unavailable");
-  let writes = 0;
-
-  await assert.rejects(
-    saveEditorProject({
-      project,
-      saveProject(nextProject) {
-        writes += 1;
-        assert.equal(nextProject, project);
-        throw storageError;
-      },
-    }),
-    (error) => error === storageError,
-  );
-
-  assert.equal(writes, 1);
-  assert.deepEqual(project, before);
-});
-
-await check("the final object with a new settings version is checked", async () => {
-  const current = fixture();
+function candidate(
+  current: GameProject,
+  description: string,
+): GameProject {
   const settings = settingsSnapshot(current) as ProjectSettingsSnapshot;
   settings.projectInfo = {
     ...settings.projectInfo,
-    description: "Changed in the editor",
+    description,
   };
-  const nextProject = createSettingsVersion(
-    current,
-    settings,
-    2,
-    "Editor update",
-  );
-  const saved: GameProject[] = [];
+  return createSettingsVersion(current, settings, 0, description);
+}
 
-  const success = await saveEditorProject({
-    project: nextProject,
-    saveProject(project) {
-      saved.push(project);
-    },
-  });
-  assert.deepEqual(success, { ok: true });
-  assert.deepEqual(saved, [nextProject]);
+class MemoryProjectStorage
+  implements EditorProjectStorage, EditorProjectRecordStore
+{
+  projects = new Map<string, unknown>();
+  events: string[] = [];
+  failPut = false;
+  failBeforeCommit = false;
 
-  const wrongCurrent = deepFreeze({
-    ...nextProject,
-    currentSettingsVersionId: "missing-settings-version",
-  });
-  const wrongProjectId = deepFreeze({
-    ...nextProject,
-    settingsVersions: nextProject.settingsVersions?.map((version, index) =>
-      index === (nextProject.settingsVersions?.length ?? 0) - 1
-        ? { ...version, projectId: "other-project" }
-        : version,
-    ),
-  });
-
-  for (const [project, path] of [
-    [wrongCurrent, "currentSettingsVersionId"],
-    [
-      wrongProjectId,
-      `settingsVersions[${(wrongProjectId.settingsVersions?.length ?? 1) - 1}].projectId`,
-    ],
-  ] as const) {
-    let writes = 0;
-    const result = await saveEditorProject({
-      project,
-      saveProject() {
-        writes += 1;
-      },
-    });
-    assert.equal(result.ok, false);
-    if (result.ok) assert.fail("expected settings version integrity failure");
-    assert.ok(
-      result.issues.some(
-        (issue) => issue.code === "dangling_reference" && issue.path === path,
-      ),
-    );
-    assert.equal(writes, 0);
+  async get(id: string) {
+    this.events.push(`get:${id}`);
+    return this.projects.get(id);
   }
-});
 
-await check("multiple issues stay bounded and do not expose project content", async () => {
-  const project = fixture();
-  project.projectInfo.title = "SECRET PROJECT TITLE";
-  project.prompts.gameMasterPrompt = "SECRET SYSTEM PROMPT";
-  project.openingScene = "SECRET OPENING";
-  project.world.locations.push(
-    structuredClone(project.world.locations[0]),
-    structuredClone(project.world.locations[0]),
-    structuredClone(project.world.locations[0]),
-    structuredClone(project.world.locations[0]),
-  );
-  const before = structuredClone(project);
+  async put(project: GameProject) {
+    this.events.push(`put:${project.id}`);
+    if (this.failPut) throw new Error("fixture put failure");
+    this.projects.set(project.id, structuredClone(project));
+  }
+
+  async transaction<T>(
+    operation: (records: EditorProjectRecordStore) => Promise<T>,
+  ): Promise<T> {
+    this.events.push("transaction:start");
+    const before = structuredClone(this.projects);
+    try {
+      const result = await operation(this);
+      if (this.failBeforeCommit) {
+        throw new Error("fixture completion failure");
+      }
+      this.events.push("transaction:commit");
+      return result;
+    } catch (error) {
+      this.projects = before;
+      this.events.push("transaction:rollback");
+      throw error;
+    }
+  }
+}
+
+function snapshot(storage: MemoryProjectStorage) {
+  return structuredClone(storage.projects);
+}
+
+// 1. A legal N -> N+1 save commits the validated record and leaves other
+// projects untouched.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  const other = fixture("other-project");
+  storage.projects.set(current.id, structuredClone(current));
+  storage.projects.set(other.id, structuredClone(other));
+  const otherBefore = structuredClone(other);
+  const next = candidate(current, "first committed edit");
 
   const result = await saveEditorProject({
-    project: deepFreeze(project),
-    saveProject() {
-      assert.fail("invalid project must not be persisted");
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: next,
+    storage,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.version, current.version + 1);
+    assert.equal(result.value.settingsVersions?.length, 2);
+    assert.deepEqual(storage.projects.get(current.id), result.value);
+  }
+  assert.deepEqual(storage.projects.get(other.id), otherBefore);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${current.id}`,
+    `put:${current.id}`,
+    "transaction:commit",
+  ]);
+}
+
+// 2. Two pages based on N cannot become last-writer-wins. The stale second
+// save performs no put and cannot erase the first page's new settings version.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const first = candidate(current, "first page");
+  const stale = candidate(current, "stale page");
+
+  const firstResult = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: first,
+    storage,
+  });
+  assert.equal(firstResult.ok, true);
+  const afterFirst = snapshot(storage);
+  storage.events = [];
+
+  const staleResult = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: stale,
+    storage,
+  });
+  assert.deepEqual(staleResult, { ok: false, code: "project_conflict" });
+  assert.deepEqual(storage.projects, afterFirst);
+  assert.equal(
+    (storage.projects.get(current.id) as GameProject).projectInfo.description,
+    "first page",
+  );
+  assert.equal(
+    (storage.projects.get(current.id) as GameProject).settingsVersions?.at(-1)
+      ?.note,
+    "first page",
+  );
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${current.id}`,
+    "transaction:commit",
+  ]);
+}
+
+// 3. Missing, fractional, negative, non-finite, and stale revision tokens all
+// fail without put or mutation.
+for (const expectedVersion of [undefined, 1.5, -1, Number.NaN] as const) {
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const before = snapshot(storage);
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: expectedVersion as number,
+    project: candidate(current, "invalid token"),
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_conflict" });
+  assert.deepEqual(storage.projects, before);
+  assert.equal(storage.events.some((event) => event.startsWith("put:")), false);
+}
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const next = candidate(current, "stale token");
+  next.version = current.version + 2;
+  const before = snapshot(storage);
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version + 1,
+    project: next,
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_conflict" });
+  assert.deepEqual(storage.projects, before);
+  assert.equal(storage.events.some((event) => event.startsWith("put:")), false);
+}
+
+// 4. JSON-valid but schema-invalid data is rejected with a field path before
+// entering storage.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const invalid = {
+    ...candidate(current, "schema invalid"),
+    projectInfo: {
+      ...current.projectInfo,
+      title: 42,
     },
+  };
+  const before = snapshot(storage);
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: invalid,
+    storage,
   });
   assert.equal(result.ok, false);
-  if (result.ok) assert.fail("expected integrity failure");
-  const message = formatProjectIntegrityFailure(result.issues);
-  assert.match(message, /duplicate_entity_id/);
-  assert.match(message, /world\.locations/);
-  assert.match(message, /另有/);
-  assert.equal(message.includes(project.projectInfo.title), false);
-  assert.equal(message.includes(project.prompts.gameMasterPrompt), false);
-  assert.equal(message.includes(project.openingScene), false);
-  assert.deepEqual(project, before);
-});
+  if (!result.ok) {
+    assert.equal(result.code, "project_schema_invalid");
+    if (result.code === "project_schema_invalid") {
+      assert.equal(result.issues[0]?.pathText, "projectInfo.title");
+    }
+  }
+  assert.deepEqual(storage.projects, before);
+  assert.deepEqual(storage.events, []);
+}
 
-await check("editor loading normalizes only in memory without persistence", async () => {
+// 5. Schema-valid integrity failures remain distinct and zero-write.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const invalid = candidate(current, "integrity invalid");
+  invalid.world.locations[1].id = invalid.world.locations[0].id;
+  const before = snapshot(storage);
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: invalid,
+    storage,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, "project_integrity_failed");
+  assert.deepEqual(storage.projects, before);
+  assert.deepEqual(storage.events, []);
+}
+
+// 6. Candidate/route mismatch is rejected before reading either project.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  const other = fixture("other-project");
+  storage.projects.set(current.id, structuredClone(current));
+  storage.projects.set(other.id, structuredClone(other));
+  const before = snapshot(storage);
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: candidate(other, "wrong owner"),
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_id_mismatch" });
+  assert.deepEqual(storage.projects, before);
+  assert.deepEqual(storage.events, []);
+}
+
+// 7. Missing projects are not recreated through put.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: candidate(current, "missing"),
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_not_found" });
+  assert.equal(storage.projects.size, 0);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${current.id}`,
+    "transaction:commit",
+  ]);
+}
+
+// 8. A deterministic final put failure returns storage failure and preserves
+// version, pointer, and history.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const before = snapshot(storage);
+  storage.failPut = true;
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: candidate(current, "put failure"),
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_storage_failed" });
+  assert.deepEqual(storage.projects, before);
+  assert.equal(storage.events.at(-1), "transaction:rollback");
+}
+
+// 9. A failure after put but before commit rolls the complete project back.
+{
+  const storage = new MemoryProjectStorage();
+  const current = fixture();
+  storage.projects.set(current.id, structuredClone(current));
+  const before = snapshot(storage);
+  storage.failBeforeCommit = true;
+  const result = await saveEditorProject({
+    routeProjectId: current.id,
+    expectedVersion: current.version,
+    project: candidate(current, "commit failure"),
+    storage,
+  });
+  assert.deepEqual(result, { ok: false, code: "project_storage_failed" });
+  assert.deepEqual(storage.projects, before);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${current.id}`,
+    `put:${current.id}`,
+    "transaction:rollback",
+  ]);
+}
+
+// 10-11. Production source awaits the safe boundary, supplies the persisted
+// baseline, commits only result.value, and formats conflict without retrying.
+{
   const page = await readFile(
     new URL("../app/editor/[id]/page.tsx", import.meta.url),
     "utf8",
   );
-  const loadEffect = page.match(
-    /useEffect\(\(\) => \{[\s\S]*?\n  \}, \[id\]\);/,
-  )?.[0];
-
-  assert.ok(loadEffect, "expected the editor loading effect");
+  const commitStart = page.indexOf("async function commitSettings(");
+  const saveStart = page.indexOf("async function save()", commitStart);
+  const commitSource = page.slice(commitStart, saveStart);
+  assert.match(commitSource, /expectedVersion: p\.version/);
+  assert.match(commitSource, /storage: editorProjectStorage/);
+  assert.match(commitSource, /const result = await saveEditorProject\(\{/);
+  assert.ok(
+    commitSource.indexOf("if (!result.ok)") <
+      commitSource.indexOf("setP(saved)"),
+  );
+  assert.match(commitSource, /const saved = result\.value;[\s\S]*setP\(saved\)/);
+  assert.doesNotMatch(commitSource, /setP\(next\)/);
+  assert.doesNotMatch(commitSource, /db\.projects\.(?:put|update)/);
+  assert.doesNotMatch(commitSource, /project_conflict[\s\S]*saveEditorProject/);
+  assert.match(commitSource, /formatEditorProjectSaveFailure\(result\)/);
   assert.match(
-    loadEffect,
-    /const normalized = ensureSettingsVersions\(withLength\);[\s\S]*setP\(normalized\);[\s\S]*setValue\(structuredClone\(normalized\.projectInfo\)\);[\s\S]*setText\(JSON\.stringify\(normalized\.projectInfo, null, 2\)\)/,
+    formatEditorProjectSaveFailure({
+      ok: false,
+      code: "project_conflict",
+    }),
+    /其他页面更新/,
   );
-  assert.doesNotMatch(loadEffect, /db\.projects\.(?:put|add)/);
-  assert.doesNotMatch(loadEffect, /void\s+db\.projects/);
-});
+}
 
-await check("all active editor persistence paths use the save gate", async () => {
-  const page = await readFile(
-    new URL("../app/editor/[id]/page.tsx", import.meta.url),
-    "utf8",
-  );
-
-  assert.match(
-    page,
-    /const result = await saveEditorProject\(\{[\s\S]*project: next,[\s\S]*saveProject: \(project\) => db\.projects\.put\(project\),[\s\S]*if \(!result\.ok\) \{[\s\S]*return false;[\s\S]*setP\(next\)/,
-  );
-  assert.match(
-    page,
-    /const saved = await commitSettings\([\s\S]*if \(!saved\) return;[\s\S]*setVersionsOpen\(false\)/,
-  );
-  assert.match(
-    page,
-    /const duplicate = ensureSettingsVersions\(raw\);[\s\S]*saveEditorProject\(\{[\s\S]*project: duplicate,[\s\S]*saveProject: \(project\) => db\.projects\.put\(project\),[\s\S]*if \(!result\.ok\)[\s\S]*toast\.success\("已复制为新项目/,
-  );
-  assert.equal(page.match(/db\.projects\.put/g)?.length, 2);
-  assert.doesNotMatch(page, /db\.projects\.add/);
-  assert.doesNotMatch(page, /void\s+db\.projects/);
-});
-
-console.log(`editor project save tests passed (${checks} checks)`);
+console.log("editor project save tests passed");
