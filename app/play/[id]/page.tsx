@@ -317,10 +317,14 @@ export default function Play() {
       throw new Error("项目不存在或当前地址已失效。");
     }
     const candidate = structuredClone(next);
-    candidate.updatedAt = new Date().toISOString();
+    const expectedUpdatedAt = next.updatedAt;
+    candidate.updatedAt = new Date(
+      Math.max(new Date().getTime(), Date.parse(expectedUpdatedAt) + 1),
+    ).toISOString();
     const result = await updateProjectSave({
       project: p,
       save: candidate,
+      expectedUpdatedAt,
       storage: projectSaveStorage,
     });
     if (!result.ok) throw new Error(formatProjectSaveFailure(result.code));

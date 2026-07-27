@@ -8,6 +8,7 @@ export type ProjectSaveErrorCode =
   | "invalid_save"
   | "save_project_mismatch"
   | "save_id_conflict"
+  | "save_conflict"
   | "save_storage_failed";
 
 export type ProjectSaveResult<T> =
@@ -168,10 +169,12 @@ export async function createProjectSave({
 export async function updateProjectSave({
   project,
   save,
+  expectedUpdatedAt,
   storage,
 }: {
   project: GameProject;
   save: GameSave;
+  expectedUpdatedAt: string;
   storage: Pick<ProjectSaveStorage, "transaction">;
 }): Promise<ProjectSaveResult<GameSave>> {
   const next = structuredClone(save);
@@ -194,6 +197,12 @@ export async function updateProjectSave({
         save: next,
       });
       if (!prepared.ok) return prepared;
+      if (
+        existing.value.updatedAt !== expectedUpdatedAt ||
+        prepared.value.updatedAt === existing.value.updatedAt
+      ) {
+        return failure("save_conflict");
+      }
       await records.put(prepared.value);
       return { ok: true, value: prepared.value };
     });
@@ -239,6 +248,8 @@ export function formatProjectSaveFailure(code: ProjectSaveErrorCode): string {
       return "存档不属于当前项目。";
     case "save_id_conflict":
       return "存档 ID 冲突，原存档未被覆盖。";
+    case "save_conflict":
+      return "存档已被更新，请重新加载后再试。";
     case "save_storage_failed":
       return "保存失败，请稍后重试。";
   }

@@ -60,6 +60,7 @@ class MemoryStorage implements ProjectSaveStorage {
   events: string[] = [];
   failAdd = false;
   failPut = false;
+  failBeforeCommit = false;
 
   async get(id: string) {
     this.events.push(`get:${id}`);
@@ -104,6 +105,9 @@ class MemoryStorage implements ProjectSaveStorage {
     const snapshot = structuredClone([...this.saves.entries()]);
     try {
       const result = await operation(this);
+      if (this.failBeforeCommit) {
+        throw new Error("fixture transaction completion failure");
+      }
       this.events.push("transaction:commit");
       return result;
     } catch (error) {
@@ -384,10 +388,12 @@ assert.deepEqual(
   storage.saves.set(a.save.id, structuredClone(a.save));
   const next = structuredClone(a.save);
   next.turn = 2;
+  next.updatedAt = "2099-01-01T00:00:00.000Z";
   freezeDeep(next);
   const updated = await updateProjectSave({
     project: a.project,
     save: next,
+    expectedUpdatedAt: a.save.updatedAt,
     storage,
   });
   assert.equal(updated.ok, true);
@@ -405,6 +411,7 @@ assert.deepEqual(
     await updateProjectSave({
       project: a.project,
       save: rebound,
+      expectedUpdatedAt: next.updatedAt,
       storage,
     }),
     { ok: false, code: "save_project_mismatch" },
@@ -423,10 +430,12 @@ assert.deepEqual(
     ...structuredClone(a.save),
     projectId: b.project.id,
   });
+  const otherOwnerBefore = structuredClone([...otherOwner.saves.entries()]);
   assert.deepEqual(
     await updateProjectSave({
       project: a.project,
       save: a.save,
+      expectedUpdatedAt: a.save.updatedAt,
       storage: otherOwner,
     }),
     { ok: false, code: "save_project_mismatch" },
@@ -435,12 +444,24 @@ assert.deepEqual(
     otherOwner.events.some((event) => event.startsWith("put:")),
     false,
   );
+  assert.deepEqual([...otherOwner.saves.entries()], otherOwnerBefore);
+  assert.equal(
+    [...otherOwner.saves.values()].some(
+      (record) =>
+        typeof record === "object" &&
+        record !== null &&
+        "projectId" in record &&
+        record.projectId === a.project.id,
+    ),
+    false,
+  );
 
   const deleted = new MemoryStorage();
   assert.deepEqual(
     await updateProjectSave({
       project: a.project,
       save: a.save,
+      expectedUpdatedAt: a.save.updatedAt,
       storage: deleted,
     }),
     { ok: false, code: "save_not_found" },
@@ -450,15 +471,219 @@ assert.deepEqual(
   const failing = new MemoryStorage();
   failing.saves.set(a.save.id, structuredClone(a.save));
   failing.failPut = true;
+  const failingCandidate = {
+    ...structuredClone(a.save),
+    updatedAt: "2099-01-02T00:00:00.000Z",
+  };
   assert.deepEqual(
     await updateProjectSave({
       project: a.project,
-      save: a.save,
+      save: failingCandidate,
+      expectedUpdatedAt: a.save.updatedAt,
       storage: failing,
     }),
     { ok: false, code: "save_storage_failed" },
   );
   assert.equal((failing.saves.get(a.save.id) as GameSave).turn, a.save.turn);
+}
+
+// A failure after the callback has performed its put but before the transaction
+// commits rolls every field back and is reported as failure, never success.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const before = structuredClone([...storage.saves.entries()]);
+  const next = structuredClone(a.save);
+  next.name = "transaction failure candidate";
+  next.turn = 8;
+  next.updatedAt = "2099-02-01T00:00:00.000Z";
+  next.recentMessages.push({
+    id: "message-after-snapshot",
+    role: "player",
+    content: "must roll back",
+    createdAt: next.updatedAt,
+    turn: next.turn,
+  });
+  storage.failBeforeCommit = true;
+
+  assert.deepEqual(
+    await updateProjectSave({
+      project: a.project,
+      save: next,
+      expectedUpdatedAt: a.save.updatedAt,
+      storage,
+    }),
+    { ok: false, code: "save_storage_failed" },
+  );
+  assert.deepEqual([...storage.saves.entries()], before);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${a.save.id}`,
+    `put:${a.save.id}`,
+    "transaction:rollback",
+  ]);
+}
+
+// A deterministic final-put failure occurs after ownership and revision checks,
+// leaves the complete original snapshot intact, and creates no extra record.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const before = structuredClone([...storage.saves.entries()]);
+  const next = {
+    ...structuredClone(a.save),
+    name: "put failure candidate",
+    turn: 9,
+    updatedAt: "2099-03-01T00:00:00.000Z",
+  };
+  storage.failPut = true;
+
+  assert.deepEqual(
+    await updateProjectSave({
+      project: a.project,
+      save: next,
+      expectedUpdatedAt: a.save.updatedAt,
+      storage,
+    }),
+    { ok: false, code: "save_storage_failed" },
+  );
+  assert.deepEqual([...storage.saves.entries()], before);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${a.save.id}`,
+    `put:${a.save.id}`,
+    "transaction:rollback",
+  ]);
+}
+
+// Two writers based on one revision cannot become last-writer-wins: the first
+// commits, while the stale second writer is rejected before put.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const first = {
+    ...structuredClone(a.save),
+    name: "first writer",
+    turn: 10,
+    updatedAt: "2099-04-01T00:00:00.000Z",
+  };
+  const second = {
+    ...structuredClone(a.save),
+    name: "stale second writer",
+    turn: 11,
+    updatedAt: "2099-05-01T00:00:00.000Z",
+  };
+
+  const firstResult = await updateProjectSave({
+    project: a.project,
+    save: first,
+    expectedUpdatedAt: a.save.updatedAt,
+    storage,
+  });
+  assert.equal(firstResult.ok, true);
+  const afterFirst = structuredClone([...storage.saves.entries()]);
+  storage.events = [];
+
+  assert.deepEqual(
+    await updateProjectSave({
+      project: a.project,
+      save: second,
+      expectedUpdatedAt: a.save.updatedAt,
+      storage,
+    }),
+    { ok: false, code: "save_conflict" },
+  );
+  assert.deepEqual([...storage.saves.entries()], afterFirst);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${a.save.id}`,
+    "transaction:commit",
+  ]);
+  assert.equal((storage.saves.get(a.save.id) as GameSave).name, "first writer");
+}
+
+// Failed non-overwriting creation never falls back to put or chooses another ID.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const before = structuredClone([...storage.saves.entries()]);
+  const target = { ...structuredClone(a.save), id: "failed-create" };
+  storage.failAdd = true;
+
+  assert.deepEqual(
+    await createProjectSave({
+      project: a.project,
+      save: target,
+      storage,
+    }),
+    { ok: false, code: "save_storage_failed" },
+  );
+  assert.deepEqual([...storage.saves.entries()], before);
+  assert.equal(storage.saves.has(target.id), false);
+  assert.deepEqual(storage.events, [`add:${target.id}`]);
+}
+
+// Failed copy creation preserves the source byte-for-byte and leaves no partial
+// target record.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const sourceBefore = structuredClone(storage.saves.get(a.save.id));
+  const source = await loadProjectSave({
+    routeProjectId: a.project.id,
+    project: a.project,
+    saveId: a.save.id,
+    storage,
+  });
+  if (!source.ok) throw new Error("copy source fixture did not load");
+  const copy = {
+    ...structuredClone(source.value),
+    id: "failed-copy",
+    name: "copy candidate",
+    updatedAt: "2099-06-01T00:00:00.000Z",
+  };
+  storage.failAdd = true;
+
+  assert.deepEqual(
+    await createProjectSave({
+      project: a.project,
+      save: copy,
+      storage,
+    }),
+    { ok: false, code: "save_storage_failed" },
+  );
+  assert.deepEqual(storage.saves.get(a.save.id), sourceBefore);
+  assert.equal(storage.saves.has(copy.id), false);
+  assert.deepEqual(storage.events, [`get:${a.save.id}`, `add:${copy.id}`]);
+}
+
+// Invalid migrated/schema input fails after the transactional read but before
+// put; its error category remains distinct from a storage failure.
+{
+  const storage = new MemoryStorage();
+  storage.saves.set(a.save.id, structuredClone(a.save));
+  const before = structuredClone([...storage.saves.entries()]);
+  const invalid = {
+    ...structuredClone(a.save),
+    playerState: null,
+    updatedAt: "2099-07-01T00:00:00.000Z",
+  } as unknown as GameSave;
+
+  assert.deepEqual(
+    await updateProjectSave({
+      project: a.project,
+      save: invalid,
+      expectedUpdatedAt: a.save.updatedAt,
+      storage,
+    }),
+    { ok: false, code: "invalid_save" },
+  );
+  assert.deepEqual([...storage.saves.entries()], before);
+  assert.deepEqual(storage.events, [
+    "transaction:start",
+    `get:${a.save.id}`,
+    "transaction:commit",
+  ]);
 }
 
 // Deletion also revalidates ownership in its transaction.
@@ -488,6 +713,7 @@ for (const code of [
   "invalid_save",
   "save_project_mismatch",
   "save_id_conflict",
+  "save_conflict",
   "save_storage_failed",
 ] as const) {
   const message = formatProjectSaveFailure(code);
