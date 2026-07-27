@@ -3,19 +3,32 @@ import Link from "next/link";
 import { BookOpen, Feather, Library, Settings, SunMoon } from "lucide-react";
 import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
+import {
+  APP_THEME_STORAGE_KEY,
+  DEFAULT_APP_THEME,
+  nextAppTheme,
+  resolveAppTheme,
+  type AppThemeId,
+} from "@/lib/app-theme";
+
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [light, setLight] = useState(false);
+  const [theme, setTheme] = useState<AppThemeId>(DEFAULT_APP_THEME);
+
   useEffect(() => {
-    const v = localStorage.getItem("theme") === "light";
-    setLight(v);
-    document.documentElement.dataset.theme = v ? "light" : "dark";
+    const storedTheme = resolveAppTheme(
+      localStorage.getItem(APP_THEME_STORAGE_KEY),
+    );
+    setTheme(storedTheme);
+    document.documentElement.dataset.theme = storedTheme;
   }, []);
+
   function toggle() {
-    const v = !light;
-    setLight(v);
-    localStorage.setItem("theme", v ? "light" : "dark");
-    document.documentElement.dataset.theme = v ? "light" : "dark";
+    const nextTheme = nextAppTheme(theme);
+    setTheme(nextTheme);
+    localStorage.setItem(APP_THEME_STORAGE_KEY, nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
   }
+
   return (
     <>
       <header className="sticky top-0 z-50 border-b hairline bg-[color-mix(in_srgb,var(--ink)_92%,transparent)] backdrop-blur-xl">
