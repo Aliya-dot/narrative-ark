@@ -3,14 +3,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
-  BookOpenText,
-  DoorOpen,
   KeyRound,
-  Leaf,
+  Layers3,
   Play,
   Sprout,
   Upload,
-  Waypoints,
 } from "lucide-react";
 import { db } from "@/lib/db";
 import type { AIConfig, GameProject, GameSave } from "@/lib/types";
@@ -23,6 +20,10 @@ import {
 } from "@/lib/project-import-workflow";
 import { loadProjectList } from "@/lib/project-list-loader";
 import { resolveSaveForProject } from "@/lib/project-save-boundary";
+import {
+  HeroBotanicalArtwork,
+  JourneyArtwork,
+} from "@/components/home-artwork";
 export default function Home() {
   const [projects, setProjects] = useState<GameProject[] | null>(null);
   const [config, setConfig] = useState<AIConfig>();
@@ -93,9 +94,7 @@ export default function Home() {
     <>
       <section className="home-hero">
         <div aria-hidden="true" className="home-hero-botanical">
-          <Leaf />
-          <Leaf />
-          <Leaf />
+          <HeroBotanicalArtwork />
         </div>
         <div className="home-hero-copy reveal">
           <p className="home-hero-kicker mono gold">AI NARRATIVE WORKSHOP</p>
@@ -164,76 +163,83 @@ export default function Home() {
                 <small className="mono muted">01 · DEFINE</small>
                 <p className="display">定下世界的第一条规则</p>
               </div>
-              <Sprout aria-hidden="true" />
+              <JourneyArtwork kind="define" />
             </div>
             <div className="home-journey-card panel">
               <div>
                 <small className="mono muted">02 · REMEMBER</small>
                 <p className="display">让角色记住每一次选择</p>
               </div>
-              <BookOpenText aria-hidden="true" />
+              <JourneyArtwork kind="remember" />
             </div>
             <div className="home-journey-card panel">
               <div>
                 <small className="mono muted">03 · CONTINUE</small>
                 <p className="display">离开以后，世界仍在等待</p>
               </div>
-              <DoorOpen aria-hidden="true" />
+              <JourneyArtwork kind="continue" />
             </div>
           </div>
         </div>
       </section>
-      <section className="border-y hairline bg-[var(--panel)]">
-        <div className="container grid gap-px py-7 md:grid-cols-3">
-          <div className="p-5">
-            <span className="badge">
-              <Waypoints size={13} />
-              简单模式
+      <section className="home-feature-strip">
+        <div className="home-feature-grid">
+          <div className="home-feature">
+            <span className="home-feature-icon">
+              <Sprout />
             </span>
-            <h2 className="display mt-4 text-xl">几句话，完整世界</h2>
-            <p className="muted mt-2 text-sm leading-6">
-              AI 自动补全世界观、角色、规则与剧情结构。
-            </p>
+            <div>
+              <small className="muted">简单模式</small>
+              <h2 className="display">几句话，完整世界</h2>
+              <p className="muted">AI 自动补全世界观、角色、规则与剧情结构。</p>
+            </div>
           </div>
-          <div className="p-5 md:border-x hairline">
-            <span className="badge">专业模式</span>
-            <h2 className="display mt-4 text-xl">逐层掌控设定</h2>
-            <p className="muted mt-2 text-sm leading-6">
-              七步创作流程，重要设定由你决定，空白交给 AI。
-            </p>
-          </div>
-          <div className="p-5">
-            <span className="badge">
-              <KeyRound size={13} />
-              {config ? "API 已就绪" : "尚未配置 API"}
+          <div className="home-feature">
+            <span className="home-feature-icon">
+              <Layers3 />
             </span>
-            <h2 className="display mt-4 text-xl">密钥保存在浏览器</h2>
-            <p className="muted mt-2 text-sm leading-6">
-              调用模型时临时发送至本站代理；应用代码不会主动记录或持久化密钥。
-            </p>
-            <Link
-              href="/settings"
-              className="gold mt-2 inline-flex items-center gap-1 text-sm"
-            >
-              配置模型 <ArrowRight size={14} />
-            </Link>
+            <div>
+              <small className="muted">专业模式</small>
+              <h2 className="display">逐层掌控设定</h2>
+              <p className="muted">
+                七步创作流程，重要设定由你决定，空白交给 AI。
+              </p>
+            </div>
+          </div>
+          <div className="home-feature">
+            <span className="home-feature-icon">
+              <KeyRound />
+            </span>
+            <div>
+              <small className="muted">
+                {config ? "API 已就绪" : "尚未配置 API"}
+              </small>
+              <h2 className="display">密钥保存在浏览器</h2>
+              <p className="muted">
+                调用模型时临时发送至本站代理；应用代码不会主动记录或持久化密钥。
+              </p>
+              {!config ? (
+                <Link href="/settings" className="home-feature-link gold">
+                  配置模型 <ArrowRight size={13} />
+                </Link>
+              ) : null}
+            </div>
           </div>
         </div>
       </section>
-      <section className="container py-16">
-        <div className="mb-7 flex items-end justify-between">
-          <div>
-            <p className="mono muted text-xs">YOUR ARCHIVE</p>
-            <h2 className="display mt-2 text-3xl">最近项目</h2>
-          </div>
-          <Link href="/create" className="btn">
-            新建项目
+      <section className="home-archive">
+        <div className="home-archive-heading">
+          <h2 className="display">
+            最近项目 <Sprout aria-hidden="true" />
+          </h2>
+          <Link href="/create">
+            新建项目 <ArrowRight size={14} />
           </Link>
         </div>
         {projects === null ? (
           <LoadingState />
         ) : projects.length ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="home-project-grid">
             {projects.map((p) => (
               <ProjectCard
                 key={p.id}

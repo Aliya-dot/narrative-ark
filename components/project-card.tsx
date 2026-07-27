@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { BookOpen, Play, Trash2 } from "lucide-react";
+import { Pencil, Play, Trash2 } from "lucide-react";
 import type { GameProject, GameSave } from "@/lib/types";
-import { getStoryLengthPreset, storyLengthMeta } from "@/lib/story-length";
+import { getStoryLengthPreset } from "@/lib/story-length";
+import { ProjectArtwork } from "@/components/home-artwork";
 export function ProjectCard({
   project,
   save,
@@ -13,44 +14,54 @@ export function ProjectCard({
   onDelete: (p: GameProject) => void;
 }) {
   const length = getStoryLengthPreset(project.projectInfo.gameLength);
-  const lengthMeta = storyLengthMeta(length.id);
+  const artworkVariant =
+    [...project.id].reduce(
+      (sum, character) => sum + character.charCodeAt(0),
+      0,
+    ) % 3;
+
   return (
-    <article className="panel group p-5 transition hover:border-[#4b5663]">
-      <div className="flex items-start justify-between">
-        <span className="badge">{project.projectInfo.genre || "未定题材"}</span>
+    <article className="home-project-card panel">
+      <div className="home-project-card-body">
+        <ProjectArtwork variant={artworkVariant} />
         <button
-          className="btn icon-btn border-transparent bg-transparent opacity-50 hover:opacity-100"
+          aria-label="删除项目"
+          className="home-project-delete"
           title="删除项目"
           onClick={() => onDelete(project)}
         >
-          <Trash2 size={15} />
+          <Trash2 size={14} />
         </button>
+        <h3 className="display">{project.projectInfo.title}</h3>
+        <div className="home-project-tags">
+          <span>{project.projectInfo.genre || "未定题材"}</span>
+          <span>
+            {project.projectInfo.creationMode === "advanced"
+              ? "专业模式"
+              : "简单模式"}
+          </span>
+          <span>{length.label}篇</span>
+        </div>
+        <p className="sr-only">{project.projectInfo.description}</p>
+        <div className="home-project-meta muted">
+          <span>{save ? `最新回合：第 ${save.turn} 回合` : "尚未开始"}</span>
+          <time
+            dateTime={new Date(
+              save?.updatedAt || project.updatedAt,
+            ).toISOString()}
+          >
+            {new Date(
+              save?.updatedAt || project.updatedAt,
+            ).toLocaleDateString()}
+          </time>
+        </div>
       </div>
-      <h3 className="display mt-5 text-2xl">{project.projectInfo.title}</h3>
-      <p className="muted mt-2 line-clamp-2 min-h-11 text-sm leading-6">
-        {project.projectInfo.description}
-      </p>
-      <div className="muted mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <span>
-          {project.projectInfo.creationMode === "advanced"
-            ? "专业模式"
-            : "简单模式"}
-        </span>
-        <span>
-          {length.label}篇 · {lengthMeta.estimatedTime}
-        </span>
-        <span>{save ? `第 ${save.turn} 回合` : "尚未开始"}</span>
-        <span>
-          {new Date(save?.updatedAt || project.updatedAt).toLocaleDateString()}
-        </span>
-      </div>
-      <div className="mt-5 flex gap-2">
-        <Link className="btn flex-1" href={`/editor/${project.id}`}>
-          <BookOpen size={15} />
+      <div className="home-project-actions">
+        <Link href={`/editor/${project.id}`}>
+          <Pencil size={14} />
           编辑
         </Link>
         <Link
-          className="btn btn-primary flex-1"
           href={
             save ? `/play/${project.id}?save=${save.id}` : `/play/${project.id}`
           }
