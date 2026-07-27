@@ -28,8 +28,12 @@ export type ProjectImportFailure =
       code:
         | "file_too_large"
         | "invalid_json"
-        | "storage_conflict"
         | "storage_failure";
+    }
+  | {
+      ok: false;
+      code: "storage_conflict";
+      conflicts: ImportConflict[];
     }
   | {
       ok: false;
@@ -135,7 +139,9 @@ export function formatProjectImportFailure(
       return `存在相同 ID（${ids}），导入未执行，本地数据没有变化。`;
     }
     case "storage_conflict":
-      return "写入时检测到相同 ID，导入未执行，本地数据没有变化。";
+      return `写入时检测到相同 ID（${failure.conflicts
+        .map(({ code, entityId }) => `${code}:${entityId}`)
+        .join(", ")}），导入未执行，本地数据没有变化。`;
     case "storage_failure":
       return "导入写入失败，未显示成功。";
     case "preparation_failed": {

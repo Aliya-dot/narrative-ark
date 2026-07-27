@@ -76,6 +76,17 @@ class MemoryPersistence implements ProjectImportPersistence {
   events: string[] = [];
   failProject = false;
   failSave = false;
+  failBeforeCommit = false;
+
+  async getProject(id: string): Promise<GameProject | undefined> {
+    this.events.push(`project:get:${id}`);
+    return this.projects.get(id);
+  }
+
+  async getSave(id: string): Promise<GameSave | undefined> {
+    this.events.push(`save:get:${id}`);
+    return this.saves.get(id);
+  }
 
   async addProject(project: GameProject): Promise<void> {
     this.events.push(`project:add:${project.id}`);
@@ -91,15 +102,19 @@ class MemoryPersistence implements ProjectImportPersistence {
     this.saves.set(save.id, structuredClone(save));
   }
 
-  async runProjectSaveTransaction(
-    operation: () => Promise<void>,
-  ): Promise<void> {
+  async runProjectSaveTransaction<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
     this.events.push("transaction:start");
     const projectsBefore = structuredClone(this.projects);
     const savesBefore = structuredClone(this.saves);
     try {
-      await operation();
+      const result = await operation();
+      if (this.failBeforeCommit) {
+        throw new Error("transaction completion fixture failure");
+      }
       this.events.push("transaction:commit");
+      return result;
     } catch (error) {
       this.projects = projectsBefore;
       this.saves = savesBefore;
@@ -107,6 +122,30 @@ class MemoryPersistence implements ProjectImportPersistence {
       throw error;
     }
   }
+}
+
+function seedExistingData(persistence: MemoryPersistence) {
+  const project = projectFixture();
+  project.id = "existing-project";
+  const save = saveFixture(project);
+  save.id = "existing-save";
+  persistence.projects.set(project.id, structuredClone(project));
+  persistence.saves.set(save.id, structuredClone(save));
+}
+
+function databaseSnapshot(persistence: MemoryPersistence) {
+  return {
+    projects: structuredClone(persistence.projects),
+    saves: structuredClone(persistence.saves),
+  };
+}
+
+function assertDatabaseSnapshot(
+  persistence: MemoryPersistence,
+  snapshot: ReturnType<typeof databaseSnapshot>,
+) {
+  assert.deepEqual(persistence.projects, snapshot.projects);
+  assert.deepEqual(persistence.saves, snapshot.saves);
 }
 
 function workflowDependencies(
@@ -130,6 +169,8 @@ function workflowDependencies(
 // 1. A bare project uses the non-overwriting project add path.
 {
   const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
   const project = projectFixture();
   const callbacks: string[] = [];
   const result = await executeProjectImport(
@@ -138,14 +179,26 @@ function workflowDependencies(
     workflowDependencies(persistence),
   );
   assert.deepEqual(result, { ok: true, kind: "project" });
-  assert.deepEqual(persistence.events, [`project:add:${project.id}`]);
+  assert.deepEqual(persistence.events, [
+    "transaction:start",
+    `project:get:${project.id}`,
+    `project:add:${project.id}`,
+    "transaction:commit",
+  ]);
   assert.deepEqual(callbacks, ["committed"]);
   assert.deepEqual(persistence.projects.get(project.id), project);
+  assert.deepEqual(persistence.saves, before.saves);
+  assert.deepEqual(
+    persistence.projects.get("existing-project"),
+    before.projects.get("existing-project"),
+  );
 }
 
 // 2. A game bundle writes both entities inside one transaction.
 {
   const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
   const bundle = bundleFixture();
   const result = await executeProjectImport(
     jsonFile(bundle),
@@ -155,12 +208,22 @@ function workflowDependencies(
   assert.equal(result.ok, true);
   assert.deepEqual(persistence.events, [
     "transaction:start",
+    `project:get:${bundle.project.id}`,
+    `save:get:${bundle.save.id}`,
     `project:add:${bundle.project.id}`,
     `save:add:${bundle.save.id}`,
     "transaction:commit",
   ]);
   assert.equal(persistence.projects.has(bundle.project.id), true);
   assert.equal(persistence.saves.has(bundle.save.id), true);
+  assert.deepEqual(
+    persistence.projects.get("existing-project"),
+    before.projects.get("existing-project"),
+  );
+  assert.deepEqual(
+    persistence.saves.get("existing-save"),
+    before.saves.get("existing-save"),
+  );
 }
 
 // 3-5. Every preflight conflict combination produces zero write attempts.
@@ -217,7 +280,13 @@ for (const conflictKind of ["project", "save", "both"] as const) {
       persistence.projects.set(project.id, local);
     }),
   );
-  assert.deepEqual(result, { ok: false, code: "storage_conflict" });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "storage_conflict",
+    conflicts: [
+      { code: "project_id_conflict", entityId: project.id },
+    ],
+  });
   assert.deepEqual(persistence.projects.get(project.id), local);
 }
 
@@ -232,7 +301,13 @@ for (const conflictKind of ["project", "save", "both"] as const) {
       persistence.saves.set(bundle.save.id, structuredClone(bundle.save));
     }),
   );
-  assert.deepEqual(result, { ok: false, code: "storage_conflict" });
+  assert.deepEqual(result, {
+    ok: false,
+    code: "storage_conflict",
+    conflicts: [
+      { code: "save_id_conflict", entityId: bundle.save.id },
+    ],
+  });
   assert.equal(persistence.projects.has(bundle.project.id), false);
   assert.equal(persistence.saves.has(bundle.save.id), true);
   assert.equal(persistence.events.at(-1), "transaction:rollback");
@@ -241,6 +316,8 @@ for (const conflictKind of ["project", "save", "both"] as const) {
 // 8. An arbitrary save failure also rolls back the project.
 {
   const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
   persistence.failSave = true;
   const bundle = bundleFixture();
   const result = await executeProjectImport(
@@ -249,14 +326,17 @@ for (const conflictKind of ["project", "save", "both"] as const) {
     workflowDependencies(persistence),
   );
   assert.deepEqual(result, { ok: false, code: "storage_failure" });
-  assert.equal(persistence.projects.size, 0);
-  assert.equal(persistence.saves.size, 0);
+  assertDatabaseSnapshot(persistence, before);
+  assert.equal(persistence.projects.has(bundle.project.id), false);
+  assert.equal(persistence.saves.has(bundle.save.id), false);
   assert.equal(persistence.events.at(-1), "transaction:rollback");
 }
 
 // 9. A bare project failure does not invoke the committed callback.
 {
   const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
   persistence.failProject = true;
   let successCount = 0;
   const result = await executeProjectImport(
@@ -268,6 +348,50 @@ for (const conflictKind of ["project", "save", "both"] as const) {
   );
   assert.deepEqual(result, { ok: false, code: "storage_failure" });
   assert.equal(successCount, 0);
+  assertDatabaseSnapshot(persistence, before);
+  assert.equal(persistence.events.at(-1), "transaction:rollback");
+}
+
+// A game bundle project-add failure stops before save add and changes nothing.
+{
+  const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
+  persistence.failProject = true;
+  const bundle = bundleFixture();
+  const result = await executeProjectImport(
+    jsonFile(bundle),
+    () => assert.fail("failed project add must not report success"),
+    workflowDependencies(persistence),
+  );
+  assert.deepEqual(result, { ok: false, code: "storage_failure" });
+  assertDatabaseSnapshot(persistence, before);
+  assert.equal(
+    persistence.events.includes(`save:add:${bundle.save.id}`),
+    false,
+  );
+  assert.equal(persistence.events.at(-1), "transaction:rollback");
+}
+
+// A failure after both adds but before commit rolls the complete unit back.
+{
+  const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
+  persistence.failBeforeCommit = true;
+  const bundle = bundleFixture();
+  const result = await executeProjectImport(
+    jsonFile(bundle),
+    () => assert.fail("uncommitted import must not report success"),
+    workflowDependencies(persistence),
+  );
+  assert.deepEqual(result, { ok: false, code: "storage_failure" });
+  assertDatabaseSnapshot(persistence, before);
+  assert.deepEqual(persistence.events.slice(-3), [
+    `project:add:${bundle.project.id}`,
+    `save:add:${bundle.save.id}`,
+    "transaction:rollback",
+  ]);
 }
 
 // 10. Refresh/success work runs only after the transaction commits.
@@ -292,6 +416,8 @@ for (const conflictKind of ["project", "save", "both"] as const) {
 // 11. Mismatched save ownership is rejected without correction or writes.
 {
   const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
   const bundle = bundleFixture();
   bundle.save.projectId = "different-project";
   const result = await executeProjectImport(
@@ -301,7 +427,41 @@ for (const conflictKind of ["project", "save", "both"] as const) {
   );
   assert.equal(result.ok, false);
   assert.equal(bundle.save.projectId, "different-project");
-  assert.equal(persistence.projects.size + persistence.saves.size, 0);
+  assertDatabaseSnapshot(persistence, before);
+  assert.deepEqual(persistence.events, []);
+}
+
+// Invalid project and save payloads are distinguished from storage failures
+// and leave both stores exactly unchanged.
+{
+  const persistence = new MemoryPersistence();
+  seedExistingData(persistence);
+  const before = databaseSnapshot(persistence);
+  const invalidProject = projectFixture();
+  (
+    invalidProject.world.locations[0] as unknown as { connections: unknown }
+  ).connections = "invalid";
+  const projectResult = await executeProjectImport(
+    jsonFile(invalidProject),
+    () => assert.fail("invalid project must not report success"),
+    workflowDependencies(persistence),
+  );
+  assert.equal(projectResult.ok, false);
+  if (!projectResult.ok) assert.equal(projectResult.code, "preparation_failed");
+  assertDatabaseSnapshot(persistence, before);
+
+  const invalidBundle = bundleFixture();
+  (
+    invalidBundle.save as unknown as { recentMessages: unknown }
+  ).recentMessages = "invalid";
+  const saveResult = await executeProjectImport(
+    jsonFile(invalidBundle),
+    () => assert.fail("invalid save must not report success"),
+    workflowDependencies(persistence),
+  );
+  assert.equal(saveResult.ok, false);
+  if (!saveResult.ok) assert.equal(saveResult.code, "preparation_failed");
+  assertDatabaseSnapshot(persistence, before);
   assert.deepEqual(persistence.events, []);
 }
 
@@ -391,6 +551,8 @@ for (const conflictKind of ["project", "save", "both"] as const) {
   );
   assert.match(persistenceSource, /db\.projects\.add\(project\)/);
   assert.match(persistenceSource, /db\.saves\.add\(save\)/);
+  assert.match(persistenceSource, /db\.projects\.get\(id\)/);
+  assert.match(persistenceSource, /db\.saves\.get\(id\)/);
   assert.match(
     persistenceSource,
     /db\.transaction\("rw", db\.projects, db\.saves, operation\)/,

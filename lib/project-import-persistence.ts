@@ -6,9 +6,11 @@ import type {
 import type { GameProject, GameSave } from "./types";
 
 export interface ProjectImportPersistence {
+  getProject(id: string): Promise<unknown | undefined>;
+  getSave(id: string): Promise<unknown | undefined>;
   addProject(project: GameProject): Promise<unknown>;
   addSave(save: GameSave): Promise<unknown>;
-  runProjectSaveTransaction(operation: () => Promise<void>): Promise<void>;
+  runProjectSaveTransaction<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 type PreparedImport = Extract<PreparedProjectImport, { ok: true }>;
@@ -25,10 +27,21 @@ export type ProjectImportPersistenceResult =
     }
   | {
       ok: false;
-      code: "storage_conflict" | "storage_failure";
+      code: "storage_conflict";
+      conflicts: ImportConflict[];
+    }
+  | {
+      ok: false;
+      code: "storage_failure";
     };
 
 const dexieProjectImportPersistence: ProjectImportPersistence = {
+  async getProject(id) {
+    return db.projects.get(id);
+  },
+  async getSave(id) {
+    return db.saves.get(id);
+  },
   async addProject(project) {
     await db.projects.add(project);
   },
@@ -36,7 +49,7 @@ const dexieProjectImportPersistence: ProjectImportPersistence = {
     await db.saves.add(save);
   },
   async runProjectSaveTransaction(operation) {
-    await db.transaction("rw", db.projects, db.saves, operation);
+    return db.transaction("rw", db.projects, db.saves, operation);
   },
 };
 
@@ -47,6 +60,16 @@ function isConstraintError(error: unknown): boolean {
     "name" in error &&
     error.name === "ConstraintError"
   );
+}
+
+class ImportStorageConflictError extends Error {
+  readonly conflicts: ImportConflict[];
+
+  constructor(conflicts: ImportConflict[]) {
+    super("import storage conflict");
+    this.name = "ImportStorageConflictError";
+    this.conflicts = conflicts;
+  }
 }
 
 export async function persistPreparedProjectImport(
@@ -62,18 +85,68 @@ export async function persistPreparedProjectImport(
   }
 
   try {
-    if (prepared.kind === "project") {
-      await persistence.addProject(prepared.project);
-    } else {
-      await persistence.runProjectSaveTransaction(async () => {
+    await persistence.runProjectSaveTransaction(async () => {
+      const conflicts: ImportConflict[] = [];
+      if ((await persistence.getProject(prepared.project.id)) !== undefined) {
+        conflicts.push({
+          code: "project_id_conflict",
+          entityId: prepared.project.id,
+        });
+      }
+      if (
+        prepared.kind === "game_bundle" &&
+        (await persistence.getSave(prepared.save.id)) !== undefined
+      ) {
+        conflicts.push({
+          code: "save_id_conflict",
+          entityId: prepared.save.id,
+        });
+      }
+      if (conflicts.length > 0) {
+        throw new ImportStorageConflictError(conflicts);
+      }
+
+      try {
         await persistence.addProject(prepared.project);
-        await persistence.addSave(prepared.save);
-      });
-    }
+      } catch (error) {
+        if (isConstraintError(error)) {
+          throw new ImportStorageConflictError([
+            {
+              code: "project_id_conflict",
+              entityId: prepared.project.id,
+            },
+          ]);
+        }
+        throw error;
+      }
+
+      if (prepared.kind === "game_bundle") {
+        try {
+          await persistence.addSave(prepared.save);
+        } catch (error) {
+          if (isConstraintError(error)) {
+            throw new ImportStorageConflictError([
+              {
+                code: "save_id_conflict",
+                entityId: prepared.save.id,
+              },
+            ]);
+          }
+          throw error;
+        }
+      }
+    });
   } catch (error) {
+    if (error instanceof ImportStorageConflictError) {
+      return {
+        ok: false,
+        code: "storage_conflict",
+        conflicts: error.conflicts,
+      };
+    }
     return {
       ok: false,
-      code: isConstraintError(error) ? "storage_conflict" : "storage_failure",
+      code: "storage_failure",
     };
   }
 
