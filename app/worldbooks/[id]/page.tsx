@@ -204,6 +204,7 @@ export default function WorldBookEditorPage() {
             setFormalRevision({
               currentVersionId: null,
               versionNumber: 0,
+              updatedAt: extracted.book.updatedAt,
             });
             hydrated.current = true;
             setLoading(false);
@@ -227,6 +228,7 @@ export default function WorldBookEditorPage() {
           setFormalRevision({
             currentVersionId: null,
             versionNumber: 0,
+            updatedAt: value.book.updatedAt,
           });
           if (normalized.repairs.length)
             toast.warning(
@@ -239,6 +241,7 @@ export default function WorldBookEditorPage() {
           setFormalRevision({
             currentVersionId: null,
             versionNumber: 0,
+            updatedAt: created.book.updatedAt,
           });
         }
         hydrated.current = true;
@@ -258,6 +261,7 @@ export default function WorldBookEditorPage() {
       setFormalRevision({
         currentVersionId: storedBook.currentVersionId,
         versionNumber: storedBook.versionNumber,
+        updatedAt: storedBook.updatedAt,
       });
       const value = storedDraft?.value as DraftValue | undefined;
       if (value?.kind === "world-book-editor-v1" && value.book.id === id) {

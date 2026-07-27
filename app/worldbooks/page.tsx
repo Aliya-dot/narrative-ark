@@ -29,6 +29,7 @@ import {
   writeWorldBookRecords,
 } from "@/lib/world-book-record-write";
 import { createWorldBookBundle, parseWorldBookBundle } from "@/lib/world-book";
+import { advanceWorldBookUpdatedAt } from "@/lib/world-book-publish-boundary";
 
 function downloadJson(name: string, value: unknown) {
   const blob = new Blob([JSON.stringify(value, null, 2)], {
@@ -351,7 +352,7 @@ export default function WorldBooksPage() {
                       await db.worldBooks.update(book.id, {
                         status:
                           book.status === "archived" ? "draft" : "archived",
-                        updatedAt: new Date().toISOString(),
+                        updatedAt: advanceWorldBookUpdatedAt(book.updatedAt),
                       });
                       await reload();
                     }}

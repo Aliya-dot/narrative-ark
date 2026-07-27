@@ -12,6 +12,7 @@ import {
 export type WorldBookRevision = {
   currentVersionId: string | null;
   versionNumber: number;
+  updatedAt: string;
 };
 
 export interface WorldBookPublishRecords {
@@ -71,12 +72,31 @@ function failure(
 function validRevision(revision: WorldBookRevision): boolean {
   if (!Number.isInteger(revision.versionNumber) || revision.versionNumber < 0)
     return false;
+  if (
+    typeof revision.updatedAt !== "string" ||
+    !revision.updatedAt.trim() ||
+    !Number.isFinite(Date.parse(revision.updatedAt))
+  )
+    return false;
   if (revision.versionNumber === 0)
     return revision.currentVersionId === null;
   return (
     typeof revision.currentVersionId === "string" &&
     revision.currentVersionId.trim().length > 0
   );
+}
+
+export function advanceWorldBookUpdatedAt(
+  currentUpdatedAt: string,
+  proposedUpdatedAt = new Date().toISOString(),
+): string {
+  const current = Date.parse(currentUpdatedAt);
+  const proposed = Date.parse(proposedUpdatedAt);
+  const next = Math.max(
+    Number.isFinite(current) ? current + 1 : 0,
+    Number.isFinite(proposed) ? proposed : 0,
+  );
+  return new Date(next).toISOString();
 }
 
 function defaultVersionId(worldBookId: string, versionNumber: number): string {
@@ -206,31 +226,32 @@ export async function publishWorldBook({
   try {
     return await storage.transaction(async (records) => {
       const current = await records.getWorldBook(worldBookId);
-      if (!current && expectedRevision.versionNumber > 0)
-        return failure("worldbook_not_found");
+      if (!current) return failure("worldbook_not_found");
       if (
-        current &&
-        (expectedRevision.versionNumber === 0 ||
-          current.currentVersionId !== expectedRevision.currentVersionId ||
-          current.versionNumber !== expectedRevision.versionNumber)
+        current.currentVersionId !== expectedRevision.currentVersionId ||
+        current.versionNumber !== expectedRevision.versionNumber ||
+        current.updatedAt !== expectedRevision.updatedAt
       ) {
         return failure("worldbook_conflict");
       }
-      if (!current && expectedRevision.currentVersionId !== null)
-        return failure("worldbook_conflict");
-      if (current?.id !== undefined && current.id !== worldBookId)
+      if (current.id !== worldBookId)
         return failure("worldbook_id_mismatch");
 
-      const versionNumber = current ? current.versionNumber + 1 : 1;
+      const versionNumber = current.versionNumber + 1;
       const versionId = createVersionId(worldBookId, versionNumber);
       if (!versionId.trim()) return failure("worldbook_version_conflict");
-      const timestamp = now();
+      const timestamp = advanceWorldBookUpdatedAt(
+        current.updatedAt,
+        now(),
+      );
       const entries = prepared.entries.map((entry) => structuredClone(entry));
       const version: WorldBookVersion = {
         id: versionId,
         worldBookId,
         versionNumber,
-        note: note?.trim() || (current ? "发布世界书更新" : "创建世界书"),
+        note:
+          note?.trim() ||
+          (current.versionNumber === 0 ? "创建世界书" : "发布世界书更新"),
         createdAt: timestamp,
         snapshot: {
           coreSummary: prepared.book.coreSummary,
@@ -247,9 +268,7 @@ export async function publishWorldBook({
         coreSummaryStatus: prepared.book.coreSummary ? "current" : "empty",
       };
 
-      const storedIds = current
-        ? await records.listEntryIds(worldBookId)
-        : [];
+      const storedIds = await records.listEntryIds(worldBookId);
       const currentIds = new Set(entries.map((entry) => entry.id));
       await records.deleteEntries(
         storedIds.filter((entryId) => !currentIds.has(entryId)),
@@ -276,6 +295,7 @@ export async function publishWorldBook({
         revision: {
           currentVersionId: version.id,
           versionNumber: version.versionNumber,
+          updatedAt: book.updatedAt,
         },
       };
     });

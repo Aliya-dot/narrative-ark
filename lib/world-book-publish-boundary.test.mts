@@ -175,7 +175,22 @@ function revision(book: WorldBook): WorldBookRevision {
   return {
     currentVersionId: book.currentVersionId,
     versionNumber: book.versionNumber,
+    updatedAt: book.updatedAt,
   };
+}
+
+function seedUnpublished(
+  storage: MemoryPublishStorage,
+  id = "world",
+): WorldBook {
+  const book = {
+    ...candidate(id).book,
+    currentVersionId: null,
+    versionNumber: 0,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  } as unknown as WorldBook;
+  storage.books.set(id, structuredClone(book));
+  return book;
 }
 
 function versionId(id: string, number: number) {
@@ -204,10 +219,8 @@ function publish(
 {
   const storage = new MemoryPublishStorage();
   const data = candidate();
-  const result = await publish(storage, data, {
-    currentVersionId: null,
-    versionNumber: 0,
-  });
+  const unpublished = seedUnpublished(storage);
+  const result = await publish(storage, data, revision(unpublished));
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.equal(result.version.versionNumber, 1);
@@ -293,6 +306,7 @@ for (const expectedRevision of [
   const result = await publish(storage, candidate(), {
     currentVersionId: seeded.book.currentVersionId,
     versionNumber: seeded.book.versionNumber + 1,
+    updatedAt: seeded.book.updatedAt,
   });
   assert.deepEqual(result, { ok: false, code: "worldbook_conflict" });
   assert.deepEqual(storage.snapshot(), before);
@@ -305,6 +319,7 @@ for (const expectedRevision of [
   const result = await publish(storage, data, {
     currentVersionId: "world:v1:missing",
     versionNumber: 1,
+    updatedAt: "2026-01-01T00:00:00.000Z",
   });
   assert.deepEqual(result, { ok: false, code: "worldbook_not_found" });
   assert.deepEqual(storage.snapshot(), {
@@ -320,7 +335,11 @@ for (const expectedRevision of [
   const data = candidate("other");
   const result = await publishWorldBook({
     worldBookId: "world",
-    expectedRevision: { currentVersionId: null, versionNumber: 0 },
+    expectedRevision: {
+      currentVersionId: null,
+      versionNumber: 0,
+      updatedAt: data.book.updatedAt,
+    },
     candidateBook: data.book,
     candidateEntries: data.entries,
     storage,
@@ -335,6 +354,7 @@ for (const expectedRevision of [
   const result = await publish(storage, data, {
     currentVersionId: null,
     versionNumber: 0,
+    updatedAt: data.book.updatedAt,
   });
   assert.deepEqual(result, { ok: false, code: "worldbook_id_mismatch" });
   assert.deepEqual(storage.events, []);
@@ -349,6 +369,7 @@ for (const expectedRevision of [
   const result = await publish(storage, data, {
     currentVersionId: null,
     versionNumber: 0,
+    updatedAt: data.book.updatedAt,
   });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, "worldbook_validation_failed");
@@ -361,6 +382,7 @@ for (const expectedRevision of [
   const result = await publish(storage, data, {
     currentVersionId: null,
     versionNumber: 0,
+    updatedAt: data.book.updatedAt,
   });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, "worldbook_validation_failed");
@@ -453,10 +475,8 @@ await assertRollback("beforeCommit", /^putBook:/);
 {
   const storage = new MemoryPublishStorage();
   const data = candidate();
-  const result = await publish(storage, data, {
-    currentVersionId: null,
-    versionNumber: 0,
-  });
+  const unpublished = seedUnpublished(storage);
+  const result = await publish(storage, data, revision(unpublished));
   assert.equal(result.ok, true);
   const committed = storage.snapshot();
   let cleanupAttempts = 0;
