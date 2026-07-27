@@ -114,6 +114,13 @@ class MemoryStorage implements ProjectSaveStorage {
   }
 }
 
+class UnfilteredMemoryStorage extends MemoryStorage {
+  override async listByProjectId(projectId: string) {
+    this.events.push(`list:${projectId}`);
+    return [...this.saves.values()];
+  }
+}
+
 const a = fixture("project-a", "save-a");
 const b = fixture("project-b", "save-b");
 
@@ -213,6 +220,96 @@ assert.deepEqual(
     }),
     { ok: false, code: "invalid_save" },
   );
+}
+
+// Default loading prepares every candidate before sorting by updatedAt
+// descending, then by id ascending. Reads and in-memory migration never write.
+{
+  const storage = new UnfilteredMemoryStorage();
+  const latest = structuredClone(a.save) as GameSave & {
+    playerState: GameSave["playerState"] & {
+      inventory: Array<
+        GameSave["playerState"]["inventory"][number] & {
+          type?: unknown;
+          damage?: unknown;
+        }
+      >;
+    };
+  };
+  latest.id = "z-latest";
+  latest.updatedAt = "2026-03-03T00:00:00.000Z";
+  latest.playerState.inventory = [
+    {
+      id: "legacy-item",
+      name: "Legacy item",
+      description: "Legacy fixture.",
+      quantity: 1,
+      type: "weapon",
+      damage: 4,
+    },
+  ];
+  const older = {
+    ...structuredClone(a.save),
+    id: "a-older",
+    updatedAt: "2026-02-02T00:00:00.000Z",
+  };
+  const foreign = {
+    ...structuredClone(b.save),
+    id: "foreign-future",
+    updatedAt: "9999-01-01T00:00:00.000Z",
+  };
+  const invalid = {
+    id: "invalid-future",
+    projectId: a.project.id,
+    updatedAt: "9999-12-31T00:00:00.000Z",
+  };
+
+  // Valid-candidate insertion order ends with an older save, and ascending ID
+  // order also puts the older save first, so neither order represents recency.
+  storage.saves.set(latest.id, latest);
+  storage.saves.set(older.id, older);
+  storage.saves.set(foreign.id, foreign);
+  storage.saves.set(invalid.id, invalid);
+  const storedBefore = structuredClone([...storage.saves.entries()]);
+
+  const loaded = await loadLatestProjectSave({
+    routeProjectId: a.project.id,
+    project: a.project,
+    storage,
+  });
+  assert.equal(loaded.ok, true);
+  if (loaded.ok) {
+    assert.equal(loaded.value.id, latest.id);
+    assert.equal(
+      Object.hasOwn(loaded.value.playerState.inventory[0], "type"),
+      false,
+    );
+    assert.equal(
+      Object.hasOwn(loaded.value.playerState.inventory[0], "damage"),
+      false,
+    );
+  }
+  assert.deepEqual(storage.events, [`list:${a.project.id}`]);
+  assert.deepEqual([...storage.saves.entries()], storedBefore);
+}
+
+// Equal updatedAt values use the explicit stable secondary rule: ID ascending.
+{
+  const storage = new MemoryStorage();
+  const sameTime = "2026-04-04T00:00:00.000Z";
+  const tieZ = { ...structuredClone(a.save), id: "tie-z", updatedAt: sameTime };
+  const tieA = { ...structuredClone(a.save), id: "tie-a", updatedAt: sameTime };
+  storage.saves.set(tieZ.id, tieZ);
+  storage.saves.set(tieA.id, tieA);
+
+  const loaded = await loadLatestProjectSave({
+    routeProjectId: a.project.id,
+    project: a.project,
+    storage,
+  });
+  assert.equal(loaded.ok, true);
+  if (loaded.ok) assert.equal(loaded.value.id, tieA.id);
+  assert.deepEqual(storage.events, [`list:${a.project.id}`]);
 }
 
 // Lists contain only prepared saves for the requested project.
@@ -418,5 +515,6 @@ assert.doesNotMatch(playSource, /db\.saves\.(?:get|add|put|update|bulkPut)/);
 assert.doesNotMatch(managerSource, /db\.saves\.(?:get|add|put|update|bulkPut)/);
 assert.doesNotMatch(playSource, /projectId\s*=\s*(?:id|routeProjectId)/);
 assert.doesNotMatch(managerSource, /projectId\s*=\s*routeProjectId/);
+assert.match(playSource, /setS\(loaded\.value\)/);
 
 console.log("project save boundary tests passed");

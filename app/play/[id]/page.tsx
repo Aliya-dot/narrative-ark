@@ -227,28 +227,7 @@ export default function Play() {
           return;
         }
 
-        let save = loaded.value;
-        const initialSummary =
-          save.turn === 0 && save.rollingSummary.length > 220
-            ? project.story.openingEvent || save.rollingSummary
-            : save.rollingSummary;
-        const compactedSummary = compactSummary(initialSummary, 180);
-        if (compactedSummary !== save.rollingSummary) {
-          const normalized = structuredClone(save);
-          normalized.rollingSummary = compactedSummary;
-          const updated = await updateProjectSave({
-            project,
-            save: normalized,
-            storage: projectSaveStorage,
-          });
-          if (!updated.ok) {
-            setS(null);
-            setLoadError(formatProjectSaveFailure(updated.code));
-            return;
-          }
-          save = updated.value;
-        }
-        setS(save);
+        setS(loaded.value);
       } catch {
         setP(null);
         setS(null);

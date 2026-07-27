@@ -37,6 +37,19 @@ function isConstraintError(error: unknown) {
   );
 }
 
+function compareProjectSavesByRecency(a: GameSave, b: GameSave) {
+  return b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
+}
+
+function prepareProjectSaves(projectId: string, records: unknown[]) {
+  return records
+    .flatMap((record) => {
+      const result = resolveSaveForProject({ projectId, save: record });
+      return result.ok ? [result.value] : [];
+    })
+    .sort(compareProjectSavesByRecency);
+}
+
 export function resolveSaveForProject({
   projectId,
   save,
@@ -69,12 +82,7 @@ export async function listProjectSaves({
 }): Promise<ProjectSaveResult<GameSave[]>> {
   try {
     const records = await storage.listByProjectId(projectId);
-    const saves = records.flatMap((record) => {
-      const result = resolveSaveForProject({ projectId, save: record });
-      return result.ok ? [result.value] : [];
-    });
-    saves.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return { ok: true, value: saves };
+    return { ok: true, value: prepareProjectSaves(projectId, records) };
   } catch {
     return failure("save_storage_failed");
   }
@@ -123,32 +131,12 @@ export async function loadLatestProjectSave({
   try {
     const records = await storage.listByProjectId(currentProject.value.id);
     if (records.length === 0) return failure("save_not_found");
-    const newest = [...records].sort((a, b) => {
-      const left =
-        typeof a === "object" &&
-        a !== null &&
-        "updatedAt" in a &&
-        typeof a.updatedAt === "string"
-          ? a.updatedAt
-          : "";
-      const right =
-        typeof b === "object" &&
-        b !== null &&
-        "updatedAt" in b &&
-        typeof b.updatedAt === "string"
-          ? b.updatedAt
-          : "";
-      return right.localeCompare(left);
-    })[0];
-    const save = resolveSaveForProject({
-      projectId: currentProject.value.id,
-      save: newest,
-    });
-    if (!save.ok) return save;
+    const [newest] = prepareProjectSaves(currentProject.value.id, records);
+    if (!newest) return failure("invalid_save");
     if (currentProject.value.id !== routeProjectId) {
       return failure("project_route_mismatch");
     }
-    return save;
+    return { ok: true, value: newest };
   } catch {
     return failure("save_storage_failed");
   }
