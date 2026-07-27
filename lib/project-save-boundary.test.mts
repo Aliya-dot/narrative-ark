@@ -423,6 +423,71 @@ assert.deepEqual(
   assert.equal(storage.events.includes(`put:${a.save.id}`), false);
 }
 
+// Missing, empty, or illegal revision tokens never reach put and cannot turn
+// an existing-save update into an unconditional overwrite.
+{
+  for (const expectedUpdatedAt of [
+    undefined,
+    "",
+    "   ",
+    "not-a-revision-token",
+  ]) {
+    const storage = new MemoryStorage();
+    storage.saves.set(a.save.id, structuredClone(a.save));
+    const before = structuredClone([...storage.saves.entries()]);
+    const next = {
+      ...structuredClone(a.save),
+      turn: 3,
+      updatedAt: "2099-01-01T00:00:00.000Z",
+    };
+
+    assert.deepEqual(
+      await updateProjectSave({
+        project: a.project,
+        save: next,
+        expectedUpdatedAt: expectedUpdatedAt as string,
+        storage,
+      }),
+      { ok: false, code: "save_conflict" },
+    );
+    assert.deepEqual([...storage.saves.entries()], before);
+    assert.equal(
+      storage.events.some((event) => event.startsWith("put:")),
+      false,
+    );
+  }
+}
+
+// A valid baseline token still requires the candidate revision to be a valid,
+// strictly later timestamp.
+{
+  for (const updatedAt of [
+    a.save.updatedAt,
+    "not-a-revision-token",
+    "2000-01-01T00:00:00.000Z",
+  ]) {
+    const storage = new MemoryStorage();
+    storage.saves.set(a.save.id, structuredClone(a.save));
+    const before = structuredClone([...storage.saves.entries()]);
+    const next = { ...structuredClone(a.save), updatedAt };
+
+    assert.deepEqual(
+      await updateProjectSave({
+        project: a.project,
+        save: next,
+        expectedUpdatedAt: a.save.updatedAt,
+        storage,
+      }),
+      { ok: false, code: "save_conflict" },
+    );
+    assert.deepEqual([...storage.saves.entries()], before);
+    assert.equal(
+      storage.events.some((event) => event.startsWith("put:")),
+      false,
+    );
+  }
+}
+
 // Same-ID other-project records, deleted records, and storage errors are zero-write failures.
 {
   const otherOwner = new MemoryStorage();
@@ -742,5 +807,33 @@ assert.doesNotMatch(managerSource, /db\.saves\.(?:get|add|put|update|bulkPut)/);
 assert.doesNotMatch(playSource, /projectId\s*=\s*(?:id|routeProjectId)/);
 assert.doesNotMatch(managerSource, /projectId\s*=\s*routeProjectId/);
 assert.match(playSource, /setS\(loaded\.value\)/);
+
+// The play page builds candidates locally, awaits the shared update boundary,
+// and only then commits the returned persisted record. Its turn failure branch
+// restores the pre-operation base, while quick-save preserves specific errors.
+const persistStart = playSource.indexOf("async function persist(");
+const sendStart = playSource.indexOf("async function send(", persistStart);
+const persistSource = playSource.slice(persistStart, sendStart);
+assert.ok(persistStart >= 0 && sendStart > persistStart);
+assert.ok(
+  persistSource.indexOf("await updateProjectSave({") <
+    persistSource.indexOf("setS(result.value)"),
+);
+assert.match(persistSource, /if \(!result\.ok\) throw new Error\(/);
+assert.doesNotMatch(persistSource, /setS\(candidate\)|setS\(next\)/);
+
+const turnStart = playSource.indexOf("async function send(", sendStart);
+const renderStart = playSource.indexOf("if (p === undefined", turnStart);
+const turnSource = playSource.slice(turnStart, renderStart);
+assert.doesNotMatch(
+  turnSource.slice(0, turnSource.indexOf("await persist(next)")),
+  /setS\(next\)/,
+);
+assert.match(turnSource, /await persist\(next\)/);
+assert.match(turnSource, /catch \(e\)[\s\S]*?setS\(base\)/);
+assert.match(
+  playSource,
+  /await persist\(s\);[\s\S]*?catch \(e\)[\s\S]*?e instanceof Error \? e\.message/,
+);
 
 console.log("project save boundary tests passed");

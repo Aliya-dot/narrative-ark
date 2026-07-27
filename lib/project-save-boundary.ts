@@ -42,6 +42,12 @@ function compareProjectSavesByRecency(a: GameSave, b: GameSave) {
   return b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
 }
 
+function parseSaveRevision(value: unknown) {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function prepareProjectSaves(projectId: string, records: unknown[]) {
   return records
     .flatMap((record) => {
@@ -177,6 +183,8 @@ export async function updateProjectSave({
   expectedUpdatedAt: string;
   storage: Pick<ProjectSaveStorage, "transaction">;
 }): Promise<ProjectSaveResult<GameSave>> {
+  const expectedRevision = parseSaveRevision(expectedUpdatedAt);
+  if (expectedRevision === undefined) return failure("save_conflict");
   const next = structuredClone(save);
   try {
     return await storage.transaction(async (records) => {
@@ -197,9 +205,13 @@ export async function updateProjectSave({
         save: next,
       });
       if (!prepared.ok) return prepared;
+      const existingRevision = parseSaveRevision(existing.value.updatedAt);
+      const nextRevision = parseSaveRevision(prepared.value.updatedAt);
       if (
         existing.value.updatedAt !== expectedUpdatedAt ||
-        prepared.value.updatedAt === existing.value.updatedAt
+        existingRevision === undefined ||
+        nextRevision === undefined ||
+        nextRevision <= existingRevision
       ) {
         return failure("save_conflict");
       }

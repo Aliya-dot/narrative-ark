@@ -361,7 +361,6 @@ export default function Play() {
       turn: next.turn + 1,
     });
     setInput("");
-    setS(next);
     try {
       const storedLatestProject = await db.projects.get(p.id);
       const latestProject = storedLatestProject
@@ -1043,8 +1042,10 @@ export default function Play() {
             try {
               await persist(s);
               toast.success("当前进度已保存");
-            } catch {
-              toast.error("保存失败，请稍后重试。");
+            } catch (e) {
+              toast.error(
+                e instanceof Error ? e.message : "保存失败，请稍后重试。",
+              );
             }
           }}
         >
