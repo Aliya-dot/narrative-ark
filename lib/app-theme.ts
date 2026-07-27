@@ -3,6 +3,7 @@ export const APP_THEME_STORAGE_KEY = "theme";
 export const APP_THEMES = [
   { id: "dark", label: "深色" },
   { id: "light", label: "浅色" },
+  { id: "mint", label: "青柠薄荷" },
 ] as const;
 
 export type AppThemeId = (typeof APP_THEMES)[number]["id"];

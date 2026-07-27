@@ -9,6 +9,23 @@
   --gold: #b89b62;
   --danger: #d17670;
   --ok: #7aa184;
+  --body-background:
+    radial-gradient(
+      circle at 68% 8%,
+      rgba(78, 95, 111, 0.12),
+      transparent 26rem
+    ),
+    var(--ink);
+  --header-background: color-mix(in srgb, var(--ink) 92%, transparent);
+  --input-background: var(--ink);
+  --button-background: var(--panel2);
+  --primary-background: var(--paper);
+  --primary-foreground: var(--ink);
+  --selection-background: #b89b6240;
+  --focus-ring: #b89b6218;
+  --panel-radius: 14px;
+  --control-radius: 9px;
+  --panel-shadow: none;
   color-scheme: dark;
 }
 * {
@@ -19,13 +36,7 @@ html {
 }
 body {
   margin: 0;
-  background:
-    radial-gradient(
-      circle at 68% 8%,
-      rgba(78, 95, 111, 0.12),
-      transparent 26rem
-    ),
-    var(--ink);
+  background: var(--body-background);
   color: var(--paper);
   font-family: "Noto Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
   min-height: 100vh;
@@ -48,7 +59,7 @@ a {
   color: inherit;
 }
 ::selection {
-  background: #b89b6240;
+  background: var(--selection-background);
 }
 .display {
   font-family: "Noto Serif SC", "Songti SC", SimSun, serif;
@@ -68,7 +79,8 @@ a {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
 }
 .hairline {
   border-color: var(--line);
@@ -85,9 +97,9 @@ a {
   justify-content: center;
   gap: 0.5rem;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--control-radius);
   padding: 0.68rem 1rem;
-  background: var(--panel2);
+  background: var(--button-background);
   color: var(--paper);
   transition: 0.18s ease;
 }
@@ -96,9 +108,9 @@ a {
   transform: translateY(-1px);
 }
 .btn-primary {
-  background: var(--paper);
-  color: var(--ink);
-  border-color: var(--paper);
+  background: var(--primary-background);
+  color: var(--primary-foreground);
+  border-color: var(--primary-background);
   font-weight: 650;
 }
 .btn-gold {
@@ -129,15 +141,15 @@ a {
 .input {
   width: 100%;
   border: 1px solid var(--line);
-  background: var(--ink);
+  background: var(--input-background);
   color: var(--paper);
-  border-radius: 9px;
+  border-radius: var(--control-radius);
   padding: 0.72rem 0.82rem;
   outline: none;
 }
 .input:focus {
   border-color: var(--gold);
-  box-shadow: 0 0 0 3px #b89b6218;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .worldbook-search-input {
   padding-left: 2.5rem;
@@ -343,6 +355,9 @@ a {
 .reveal {
   animation: reveal 0.55s ease both;
 }
+header {
+  background: var(--header-background) !important;
+}
 :root[data-theme="light"] {
   --ink: #f3f0e9;
   --panel: #fffdf8;
@@ -351,23 +366,32 @@ a {
   --paper: #20242b;
   --muted: #68717c;
   --gold: #816a3e;
+  --body-background: #f3f0e9;
+  --header-background: #f3f0e9e8;
+  --input-background: #fffdf8;
   color-scheme: light;
 }
-:root[data-theme="light"] body {
-  background: #f3f0e9;
-}
-:root[data-theme="light"] header {
-  background: #f3f0e9e8 !important;
-}
-:root[data-theme="light"] .input {
-  background: #fffdf8;
-}
-:root[data-theme="light"] .btn {
-  background: var(--panel2);
-}
-:root[data-theme="light"] .btn-primary {
-  background: var(--paper);
-  color: var(--ink);
+:root[data-theme="mint"] {
+  --ink: #f7faf4;
+  --panel: #fffefb;
+  --panel2: #ecf8ef;
+  --line: #cfe3d4;
+  --paper: #18352d;
+  --muted: #647a72;
+  --gold: #557a1b;
+  --danger: #b85f5b;
+  --ok: #3f8766;
+  --body-background: #f7faf4;
+  --header-background: #f7faf4ed;
+  --input-background: #fffefb;
+  --primary-background: #18352d;
+  --primary-foreground: #f7faf4;
+  --selection-background: #b9e76966;
+  --focus-ring: #79cfa638;
+  --panel-radius: 16px;
+  --control-radius: 11px;
+  --panel-shadow: 0 12px 32px rgba(47, 87, 70, 0.07);
+  color-scheme: light;
 }
 @media (prefers-reduced-motion: reduce) {
   * {
