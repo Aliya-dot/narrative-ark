@@ -19,14 +19,15 @@ export interface SaveDataWarning {
 export interface SaveDataIssue {
   code: string;
   stage: "legacy_migration" | "final_validation";
-  operation: "migrate_legacy_item" | "validate_game_save";
+  operation:
+    "migrate_legacy_item" | "migrate_legacy_quest" | "validate_game_save";
   path: Array<string | number>;
   pathText: string;
   message: string;
   recoverable: false;
   sourceVersion: null;
   targetVersion: null;
-  migrationStep: "legacy_item_fields" | null;
+  migrationStep: "legacy_item_fields" | "legacy_quest_fields" | null;
 }
 
 export type SavePreparationResult =
@@ -78,18 +79,20 @@ function compatibilityIssue(
   code: string,
   path: Array<string | number>,
   message: string,
+  operation: SaveDataIssue["operation"] = "migrate_legacy_item",
+  migrationStep: SaveDataIssue["migrationStep"] = "legacy_item_fields",
 ): SaveDataIssue {
   return {
     code,
     stage: "legacy_migration",
-    operation: "migrate_legacy_item",
+    operation,
     path,
     pathText: pathText(path),
     message,
     recoverable: false,
     sourceVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
     targetVersion: CURRENT_GAME_SAVE_SCHEMA_VERSION,
-    migrationStep: "legacy_item_fields",
+    migrationStep,
   };
 }
 
@@ -101,12 +104,18 @@ function warning(
   return { code, path, pathText: pathText(path), message };
 }
 
-function historicalItemDetail(key: "type" | "damage", value: unknown) {
+function historicalItemDetail(
+  key: "type" | "damage" | "effect",
+  value: unknown,
+) {
   if (key === "type" && typeof value === "string") {
     return `类型：${value}`;
   }
   if (key === "damage" && typeof value === "number" && Number.isFinite(value)) {
     return `伤害：${value}`;
+  }
+  if (key === "effect" && typeof value === "string") {
+    return `效果：${value}`;
   }
   return undefined;
 }
@@ -122,12 +131,31 @@ function migrateItems(
   if (!Array.isArray(items)) return;
   playerState[key] = items.map((item, index) => {
     if (!isRecord(item)) return item;
-    const historicalKeys = (["type", "damage"] as const).filter((field) =>
-      Object.hasOwn(item, field),
-    );
-    if (!historicalKeys.length) return item;
-
     const itemPath = [...path, key, index];
+    const historicalKeys = (["type", "damage", "effect"] as const).filter(
+      (field) => Object.hasOwn(item, field),
+    );
+    const quantityMissing = !Object.hasOwn(item, "quantity");
+    if (!historicalKeys.length && !quantityMissing) return item;
+
+    const migrated = { ...item };
+    if (
+      quantityMissing &&
+      typeof item.id === "string" &&
+      typeof item.name === "string" &&
+      typeof item.description === "string"
+    ) {
+      migrated.quantity = 1;
+      warnings.push(
+        warning(
+          "legacy_item_quantity_defaulted",
+          [...itemPath, "quantity"],
+          "Legacy acquired item quantity was restored to one.",
+        ),
+      );
+    }
+
+    if (!historicalKeys.length) return migrated;
     if (typeof item.description !== "string") {
       issues.push(
         compatibilityIssue(
@@ -156,9 +184,9 @@ function migrateItems(
     }
     if (details.length !== historicalKeys.length) return item;
 
-    const migrated = { ...item };
     delete migrated.type;
     delete migrated.damage;
+    delete migrated.effect;
     migrated.description = `${item.description}\n[历史属性：${details.join("；")}]`;
     for (const field of historicalKeys) {
       warnings.push(
@@ -171,6 +199,53 @@ function migrateItems(
     }
     return migrated;
   });
+}
+
+function migrateQuests(
+  value: Record<string, unknown>,
+  path: Array<string | number>,
+  warnings: SaveDataWarning[],
+  issues: SaveDataIssue[],
+) {
+  for (const key of [
+    "activeQuests",
+    "completedQuests",
+    "failedQuests",
+  ] as const) {
+    const quests = value[key];
+    if (!Array.isArray(quests)) continue;
+    value[key] = quests.map((quest, index) => {
+      if (!isRecord(quest) || !Object.hasOwn(quest, "name")) return quest;
+      const questPath = [...path, key, index];
+      if (typeof quest.name !== "string" || Object.hasOwn(quest, "title")) {
+        issues.push(
+          compatibilityIssue(
+            "legacy_quest_unmappable",
+            [...questPath, "name"],
+            "Legacy quest name could not be mapped to a title.",
+            "migrate_legacy_quest",
+            "legacy_quest_fields",
+          ),
+        );
+        return quest;
+      }
+      const migrated: Record<string, unknown> = {
+        ...quest,
+        title: quest.name,
+      };
+      delete migrated.name;
+      if (!Object.hasOwn(migrated, "objectives")) migrated.objectives = [];
+      if (!Object.hasOwn(migrated, "progress")) migrated.progress = [];
+      warnings.push(
+        warning(
+          "legacy_quest_shape_migrated",
+          questPath,
+          "Legacy quest name and list defaults were migrated.",
+        ),
+      );
+      return migrated;
+    });
+  }
 }
 
 function migratePlayerState(
@@ -228,10 +303,12 @@ function migrateGameSave(input: unknown): MigrationStageResult {
   const warnings: SaveDataWarning[] = [];
   const issues: SaveDataIssue[] = [];
   migratePlayerState(data, [], warnings, issues);
+  migrateQuests(data, [], warnings, issues);
   if (Array.isArray(data.history)) {
     data.history.forEach((entry, index) => {
       if (!isRecord(entry)) return;
       migratePlayerState(entry, ["history", index], warnings, issues);
+      migrateQuests(entry, ["history", index], warnings, issues);
     });
   }
   if (issues.length) {

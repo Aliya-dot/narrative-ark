@@ -330,12 +330,179 @@ function migrateLegacyGameSystem(
   );
 }
 
+function migrateLegacyGeneratedStageFields(
+  value: Record<string, unknown>,
+  path: Array<string | number>,
+  warnings: ProjectDataWarning[],
+) {
+  if (isRecord(value.world)) {
+    const world = value.world;
+    const matchesLegacyWorldStage =
+      typeof world.geography === "string" &&
+      Array.isArray(world.locations) &&
+      Array.isArray(world.factions) &&
+      Array.isArray(world.races) &&
+      Array.isArray(world.religions) &&
+      Array.isArray(world.socialRules) &&
+      typeof world.currentCrisis === "string" &&
+      Array.isArray(world.secrets);
+    if (matchesLegacyWorldStage) {
+      for (const field of ["background", "history", "powerSystem"] as const) {
+        if (Object.hasOwn(world, field)) continue;
+        world[field] = "";
+        warnings.push(
+          warning(
+            "legacy_generated_field_defaulted",
+            [...path, "world", field],
+            `Legacy generated world field "${field}" was restored to its original empty default.`,
+          ),
+        );
+      }
+    }
+  }
+
+  if (isRecord(value.story)) {
+    const story = value.story;
+    const matchesLegacyStoryStage =
+      typeof story.mainGoal === "string" &&
+      Array.isArray(story.chapters) &&
+      Array.isArray(story.sideQuests) &&
+      Array.isArray(story.randomEvents) &&
+      Array.isArray(story.endings);
+    if (matchesLegacyStoryStage && !Object.hasOwn(story, "openingEvent")) {
+      story.openingEvent = "";
+      warnings.push(
+        warning(
+          "legacy_generated_field_defaulted",
+          [...path, "story", "openingEvent"],
+          'Legacy generated story field "openingEvent" was restored to its original empty default.',
+        ),
+      );
+    }
+  }
+}
+
+const settingsSectionFields = {
+  world: [
+    "background",
+    "history",
+    "geography",
+    "locations",
+    "factions",
+    "races",
+    "religions",
+    "socialRules",
+    "powerSystem",
+    "currentCrisis",
+    "secrets",
+  ],
+  player: [
+    "name",
+    "gender",
+    "age",
+    "race",
+    "identity",
+    "background",
+    "personality",
+    "appearance",
+    "goals",
+    "talents",
+    "skills",
+    "weaknesses",
+    "attributes",
+    "inventory",
+    "equipment",
+    "statusEffects",
+  ],
+  story: [
+    "mainGoal",
+    "openingEvent",
+    "chapters",
+    "sideQuests",
+    "randomEvents",
+    "endings",
+  ],
+} as const;
+
+function migrateLegacyInitialSettingsSnapshot(
+  project: Record<string, unknown>,
+  warnings: ProjectDataWarning[],
+) {
+  if (
+    !Array.isArray(project.settingsVersions) ||
+    project.settingsVersions.length !== 1 ||
+    project.settingsVersionNumber !== 1
+  ) {
+    return;
+  }
+  const version = project.settingsVersions[0];
+  if (
+    !isRecord(version) ||
+    version.versionNumber !== 1 ||
+    version.effectiveFromTurn !== 0 ||
+    typeof version.id !== "string" ||
+    project.currentSettingsVersionId !== version.id ||
+    version.projectId !== project.id ||
+    !isRecord(version.settingsSnapshot)
+  ) {
+    return;
+  }
+
+  for (const [sectionKey, fieldNames] of Object.entries(
+    settingsSectionFields,
+  )) {
+    const source = project[sectionKey];
+    const target = version.settingsSnapshot[sectionKey];
+    if (!isRecord(source) || !isRecord(target)) continue;
+    for (const fieldName of fieldNames) {
+      if (
+        Object.hasOwn(target, fieldName) ||
+        !Object.hasOwn(source, fieldName)
+      ) {
+        continue;
+      }
+      target[fieldName] = structuredClone(source[fieldName]);
+      warnings.push(
+        warning(
+          "legacy_initial_snapshot_field_restored",
+          ["settingsVersions", 0, "settingsSnapshot", sectionKey, fieldName],
+          `Legacy initial settings field "${sectionKey}.${fieldName}" was restored from its project value.`,
+        ),
+      );
+    }
+  }
+}
+
+function migrateLegacyGenerationResponseArtifacts(
+  project: Record<string, unknown>,
+  warnings: ProjectDataWarning[],
+) {
+  if (
+    !Array.isArray(project.options) ||
+    !isRecord(project.stateUpdate) ||
+    typeof project.summary !== "string"
+  ) {
+    return;
+  }
+  for (const field of ["options", "stateUpdate", "summary"] as const) {
+    delete project[field];
+    warnings.push(
+      warning(
+        "legacy_generation_response_artifact_removed",
+        [field],
+        `Legacy generation response artifact "${field}" was excluded from the in-memory project.`,
+      ),
+    );
+  }
+}
+
 function migrateSettingsShape(
   value: Record<string, unknown>,
   path: Array<string | number>,
   warnings: ProjectDataWarning[],
   issues: ProjectDataIssue[],
 ) {
+  migrateLegacyGeneratedStageFields(value, path, warnings);
   if (isRecord(value.world)) {
     migrateReligions(value.world, [...path, "world"], warnings, issues);
   }
@@ -398,6 +565,8 @@ function migrateGameProject(input: unknown): MigrationStageResult {
   const issues: ProjectDataIssue[] = [];
   try {
     migrateSettingsShape(data, [], warnings, issues);
+    migrateLegacyInitialSettingsSnapshot(data, warnings);
+    migrateLegacyGenerationResponseArtifacts(data, warnings);
     if (Array.isArray(data.settingsVersions)) {
       data.settingsVersions.forEach((version, index) => {
         if (!isRecord(version) || !isRecord(version.settingsSnapshot)) return;

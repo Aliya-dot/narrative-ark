@@ -320,6 +320,12 @@ legacyPlayerState.inventory = [
     type: "weapon",
     damage: 9,
   },
+  {
+    id: "legacy-effect",
+    name: "Effect item",
+    description: "Original effect description.",
+    effect: "Restores vitality.",
+  },
 ];
 legacyPlayerState.equipment = [
   {
@@ -340,8 +346,8 @@ legacySnapshotPlayerState.inventory = [
     id: "legacy-history-inventory",
     name: "Historical inventory",
     description: "Historical inventory description.",
-    quantity: 1,
     type: "consumable",
+    effect: "Restores focus.",
   },
 ];
 legacySnapshotPlayerState.equipment = [
@@ -354,6 +360,14 @@ legacySnapshotPlayerState.equipment = [
   },
 ];
 legacyRoot.history = [legacySnapshot];
+legacyRoot.activeQuests = [
+  {
+    id: "legacy-quest",
+    name: "Legacy quest title",
+    description: "Legacy quest description.",
+    status: "active",
+  },
+];
 
 const legacyBefore = clone(legacyItems);
 const legacyPrepared = successResult(prepareGameSave(legacyItems));
@@ -375,12 +389,21 @@ assert.match(
   /Original combined description\.\n\[历史属性：类型：weapon；伤害：9\]/,
 );
 assert.match(
+  legacyPrepared.data.playerState.inventory[3].description,
+  /Original effect description\.\n\[历史属性：效果：Restores vitality\.\]/,
+);
+assert.equal(legacyPrepared.data.playerState.inventory[3].quantity, 1);
+assert.match(
   legacyPrepared.data.playerState.equipment[0].description,
   /\[历史属性：类型：armor；伤害：2\]/,
 );
 assert.match(
   legacyPrepared.data.history[0].playerState.inventory[0].description,
-  /\[历史属性：类型：consumable\]/,
+  /\[历史属性：类型：consumable；效果：Restores focus\.\]/,
+);
+assert.equal(
+  legacyPrepared.data.history[0].playerState.inventory[0].quantity,
+  1,
 );
 assert.match(
   legacyPrepared.data.history[0].playerState.equipment[0].description,
@@ -394,7 +417,16 @@ for (const item of [
 ]) {
   assert.equal(Object.hasOwn(item, "type"), false);
   assert.equal(Object.hasOwn(item, "damage"), false);
+  assert.equal(Object.hasOwn(item, "effect"), false);
 }
+assert.deepEqual(legacyPrepared.data.activeQuests[0], {
+  id: "legacy-quest",
+  title: "Legacy quest title",
+  description: "Legacy quest description.",
+  status: "active",
+  objectives: [],
+  progress: [],
+});
 const legacyPreparedAgain = successResult(prepareGameSave(legacyPrepared.data));
 assert.deepEqual(legacyPreparedAgain.data, legacyPrepared.data);
 assert.equal(legacyPreparedAgain.migrated, false);

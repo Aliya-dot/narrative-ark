@@ -103,4 +103,131 @@ assert.deepEqual(
   migrated.data,
 );
 
+const partialStageProject = emptyProject(draft) as unknown as Record<
+  string,
+  unknown
+>;
+const partialWorld = partialStageProject.world as Record<string, unknown>;
+const partialStory = partialStageProject.story as Record<string, unknown>;
+delete partialWorld.background;
+delete partialWorld.history;
+delete partialWorld.powerSystem;
+delete partialStory.openingEvent;
+const partialSnapshot = {
+  projectInfo: structuredClone(partialStageProject.projectInfo),
+  world: structuredClone(partialWorld),
+  player: structuredClone(partialStageProject.player),
+  characters: structuredClone(partialStageProject.characters),
+  gameSystem: structuredClone(partialStageProject.gameSystem),
+  story: structuredClone(partialStory),
+  prompts: structuredClone(partialStageProject.prompts),
+  openingScene: partialStageProject.openingScene,
+};
+const partialSnapshotWorld = partialSnapshot.world as Record<string, unknown>;
+for (const field of [
+  "locations",
+  "factions",
+  "races",
+  "religions",
+  "socialRules",
+  "secrets",
+]) {
+  delete partialSnapshotWorld[field];
+}
+const partialSnapshotPlayer = partialSnapshot.player as Record<string, unknown>;
+for (const field of [
+  "talents",
+  "skills",
+  "attributes",
+  "inventory",
+  "equipment",
+  "statusEffects",
+]) {
+  delete partialSnapshotPlayer[field];
+}
+const partialSnapshotStory = partialSnapshot.story as Record<string, unknown>;
+for (const field of ["chapters", "sideQuests", "randomEvents", "endings"]) {
+  delete partialSnapshotStory[field];
+}
+partialStageProject.settingsVersions = [
+  {
+    id: "legacy-partial-stage-v1",
+    projectId: partialStageProject.id,
+    versionNumber: 1,
+    createdAt: partialStageProject.createdAt,
+    updatedAt: partialStageProject.updatedAt,
+    effectiveFromTurn: 0,
+    settingsSnapshot: partialSnapshot,
+  },
+];
+partialStageProject.currentSettingsVersionId = "legacy-partial-stage-v1";
+partialStageProject.settingsVersionNumber = 1;
+partialStageProject.options = [];
+partialStageProject.stateUpdate = {};
+partialStageProject.summary = "Legacy consistency-stage response artifact.";
+
+const partialBefore = structuredClone(partialStageProject);
+const partialMigrated = success(prepareGameProject(partialStageProject));
+assert.deepEqual(partialStageProject, partialBefore);
+assert.equal(partialMigrated.migrated, true);
+assert.deepEqual(
+  partialMigrated.warnings
+    .filter((item) => item.code === "legacy_generated_field_defaulted")
+    .map((item) => item.pathText),
+  [
+    "world.background",
+    "world.history",
+    "world.powerSystem",
+    "story.openingEvent",
+  ],
+);
+assert.equal(
+  partialMigrated.warnings.filter(
+    (item) => item.code === "legacy_initial_snapshot_field_restored",
+  ).length,
+  20,
+);
+assert.deepEqual(
+  partialMigrated.warnings
+    .filter(
+      (item) => item.code === "legacy_generation_response_artifact_removed",
+    )
+    .map((item) => item.pathText),
+  ["options", "stateUpdate", "summary"],
+);
+assert.equal(partialMigrated.data.world.background, "");
+assert.equal(partialMigrated.data.world.history, "");
+assert.equal(partialMigrated.data.world.powerSystem, "");
+assert.equal(partialMigrated.data.story.openingEvent, "");
+assert.equal(
+  partialMigrated.data.settingsVersions?.[0].settingsSnapshot.world.background,
+  "",
+);
+assert.equal(
+  partialMigrated.data.settingsVersions?.[0].settingsSnapshot.story
+    .openingEvent,
+  "",
+);
+assert.deepEqual(
+  partialMigrated.data.settingsVersions?.[0].settingsSnapshot.player.inventory,
+  partialMigrated.data.player.inventory,
+);
+assert.equal(
+  Object.hasOwn(partialMigrated.data as unknown as object, "options"),
+  false,
+);
+assert.equal(
+  Object.hasOwn(partialMigrated.data as unknown as object, "stateUpdate"),
+  false,
+);
+assert.equal(
+  Object.hasOwn(partialMigrated.data as unknown as object, "summary"),
+  false,
+);
+assert.equal(GameProjectSchema.safeParse(partialMigrated.data).success, true);
+assert.deepEqual(
+  success(prepareGameProject(partialMigrated.data)).data,
+  partialMigrated.data,
+);
+
 console.log("legacy generated project migration regression tests passed");
