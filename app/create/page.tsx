@@ -683,7 +683,7 @@ export default function Create() {
             <p className="muted mt-3 leading-7">
               写下一个故事念头。AI 会补全世界、角色、规则、剧情与开场。
             </p>
-            <p className="gold mt-8">大约 2 分钟 →</p>
+            <p className="gold mt-8">开始创作 →</p>
           </button>
           <button
             className="panel p-8 text-left transition hover:border-[#b89b62]"

@@ -16,7 +16,7 @@ export const STORY_LENGTH_PRESETS: Record<GameLength, StoryLengthPreset> = {
   short: {
     id: "short",
     label: "短篇",
-    optionLabel: "短篇 · 30～50 回合（预计 30～60 分钟）",
+    optionLabel: "短篇 · 30～50 回合",
     minTurns: 30,
     targetTurns: 40,
     maxTurns: 50,
@@ -29,7 +29,7 @@ export const STORY_LENGTH_PRESETS: Record<GameLength, StoryLengthPreset> = {
   standard: {
     id: "standard",
     label: "标准",
-    optionLabel: "标准 · 80～120 回合（预计 1.5～2.5 小时）",
+    optionLabel: "标准 · 80～120 回合",
     minTurns: 80,
     targetTurns: 100,
     maxTurns: 120,
@@ -42,7 +42,7 @@ export const STORY_LENGTH_PRESETS: Record<GameLength, StoryLengthPreset> = {
   long: {
     id: "long",
     label: "长篇",
-    optionLabel: "长篇 · 180～280 回合（预计 3～5 小时）",
+    optionLabel: "长篇 · 180～280 回合",
     minTurns: 180,
     targetTurns: 230,
     maxTurns: 280,

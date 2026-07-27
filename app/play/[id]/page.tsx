@@ -62,8 +62,6 @@ import {
 import { ensureSettingsVersions } from "@/lib/settings-version";
 import {
   chapterForTurn,
-  estimateRemainingMinutes,
-  formatRemainingMinutes,
   storyPacing,
 } from "@/lib/story-length";
 import {
@@ -497,11 +495,6 @@ export default function Play() {
     s.currentLocationId;
   const pacing = storyPacing(p.projectInfo.gameLength, s.turn);
   const currentChapter = chapterForTurn(p, s);
-  const remainingMinutes = estimateRemainingMinutes(
-    p.projectInfo.gameLength,
-    s.turn,
-    s.turnDurationsMs,
-  );
   const worldTheme = getWorldTheme(p.projectInfo.genre);
   const playerSections = [
     {
@@ -612,9 +605,6 @@ export default function Play() {
           <p className="muted mt-0.5 truncate text-xs md:text-sm">
             第 {s.turn} 回合 · {currentChapter.title} · {pacing.phase} ·{" "}
             {currentLocation} · {s.currentTime}
-            {remainingMinutes !== null
-              ? ` · 根据最近速度，预计剩余 ${formatRemainingMinutes(remainingMinutes).replace("约 ", "")}`
-              : ""}
             {pacing.exceeded ? " · 已超出建议范围，剧情将逐步收束" : ""}
           </p>
         </div>
@@ -691,9 +681,9 @@ export default function Play() {
             {p.player.name || "无名旅者"}
           </h2>
           <p className="muted mt-1 text-sm">{p.player.identity}</p>
-          <dl className="mt-4 space-y-2 border-y hairline py-3">
-            <Stat label="当前位置" value={currentLocation} />
-            <Stat label="当前时间" value={s.currentTime} />
+          <dl className="mt-4 space-y-3 border-y hairline py-3">
+            <PlayerContextStat label="当前位置" value={currentLocation} />
+            <PlayerContextStat label="当前时间" value={s.currentTime} />
           </dl>
           {!!Object.keys(s.playerState.attributes).length && (
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
@@ -1100,6 +1090,22 @@ export default function Play() {
         }}
       />
     </section>
+  );
+}
+function PlayerContextStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="muted text-[11px]">{label}</dt>
+      <dd className="mt-1 min-w-0 break-words text-sm leading-5 font-medium">
+        {value}
+      </dd>
+    </div>
   );
 }
 function Stat({ label, value }: { label: string; value: string }) {
