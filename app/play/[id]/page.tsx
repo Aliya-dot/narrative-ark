@@ -78,6 +78,7 @@ import {
   formatPlayProjectLoadFailure,
   loadProjectForPlay,
 } from "@/lib/play-project-loader";
+import { displayAttributeName } from "@/lib/attribute-label";
 
 function storyScrollStorageKey(projectId: string, saveId: string) {
   return `narrative-ark:story-scroll:v2:${projectId}:${saveId}`;
@@ -731,7 +732,12 @@ export default function Play() {
           {!!Object.keys(s.playerState.attributes).length && (
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
               {Object.entries(s.playerState.attributes).map(([k, v]) => (
-                <CompactStat key={k} label={k} value={String(v)} />
+                <CompactStat
+                  key={k}
+                  label={displayAttributeName(k, p.gameSystem.attributes)}
+                  value={String(v)}
+                  sourceLabel={k}
+                />
               ))}
             </dl>
           )}
@@ -1153,9 +1159,20 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-function CompactStat({ label, value }: { label: string; value: string }) {
+function CompactStat({
+  label,
+  value,
+  sourceLabel,
+}: {
+  label: string;
+  value: string;
+  sourceLabel?: string;
+}) {
   return (
-    <div className="rounded-md bg-[var(--panel2)] px-2.5 py-2">
+    <div
+      className="rounded-md bg-[var(--panel2)] px-2.5 py-2"
+      title={sourceLabel && sourceLabel !== label ? sourceLabel : undefined}
+    >
       <dt className="muted truncate text-[10px]">{label}</dt>
       <dd className="mt-0.5 truncate text-sm font-medium">{value}</dd>
     </div>
