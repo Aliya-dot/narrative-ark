@@ -2,7 +2,7 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Bot,
@@ -78,6 +78,11 @@ import {
   formatPlayProjectLoadFailure,
   loadProjectForPlay,
 } from "@/lib/play-project-loader";
+
+function storyScrollStorageKey(projectId: string, saveId: string) {
+  return `narrative-ark:story-scroll:v2:${projectId}:${saveId}`;
+}
+
 export default function Play() {
   const { id } = useParams<{ id: string }>();
   const [p, setP] = useState<GameProject | null>();
@@ -105,6 +110,7 @@ export default function Play() {
   const storyScroll = useRef<HTMLDivElement>(null);
   const pendingScrollMessageId = useRef<string | null>(null);
   const scrollSaveFrame = useRef<number | null>(null);
+  const lastStoryScrollTop = useRef(0);
   const sendingRef = useRef(false);
   const activeTurnStartedAt = useRef<number | null>(null);
   const activeTurnElapsedMs = useRef(0);
@@ -253,33 +259,58 @@ export default function Play() {
 
     return () => cancelAnimationFrame(frame);
   }, [s?.recentMessages.length]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = storyScroll.current;
     if (!container || !s?.id) return;
+    const storageKey = storyScrollStorageKey(id, s.id);
+    lastStoryScrollTop.current = 0;
 
-    const frame = requestAnimationFrame(() => {
-      const savedPosition = sessionStorage.getItem(
-        `narrative-ark:story-scroll:${id}:${s.id}`,
-      );
-      if (savedPosition !== null) {
-        container.scrollTop = Number(savedPosition) || 0;
+    const saveNow = () => {
+      try {
+        if (container.scrollTop > 0 || lastStoryScrollTop.current === 0) {
+          lastStoryScrollTop.current = container.scrollTop;
+        }
+        localStorage.setItem(storageKey, String(lastStoryScrollTop.current));
+      } catch {
+        // 浏览器禁用本地存储时保留当前会话体验，不阻断游玩。
       }
-    });
+    };
 
-    return () => cancelAnimationFrame(frame);
+    try {
+      const savedPosition = localStorage.getItem(storageKey);
+      const targetPosition =
+        savedPosition === null
+          ? container.scrollHeight - container.clientHeight
+          : Number(savedPosition) || 0;
+      container.scrollTop = targetPosition;
+      lastStoryScrollTop.current = container.scrollTop;
+    } catch {
+      // 无本地存储权限时从剧情开头显示。
+    }
+    window.addEventListener("pagehide", saveNow);
+
+    return () => {
+      window.removeEventListener("pagehide", saveNow);
+      saveNow();
+    };
   }, [id, s?.id]);
 
   function rememberScrollPosition() {
     if (!s?.id || !storyScroll.current) return;
+    lastStoryScrollTop.current = storyScroll.current.scrollTop;
     if (scrollSaveFrame.current !== null) {
       cancelAnimationFrame(scrollSaveFrame.current);
     }
     scrollSaveFrame.current = requestAnimationFrame(() => {
       if (!storyScroll.current) return;
-      sessionStorage.setItem(
-        `narrative-ark:story-scroll:${id}:${s.id}`,
-        String(storyScroll.current.scrollTop),
-      );
+      try {
+        localStorage.setItem(
+          storyScrollStorageKey(id, s.id),
+          String(lastStoryScrollTop.current),
+        );
+      } catch {
+        // 浏览器禁用本地存储时跳过跨会话恢复。
+      }
       scrollSaveFrame.current = null;
     });
   }
