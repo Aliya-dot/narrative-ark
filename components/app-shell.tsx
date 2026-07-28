@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { BookOpen, Feather, Library, Settings } from "lucide-react";
+import { BookOpen, Library, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { ThemePicker } from "@/components/theme-picker";
 
@@ -20,29 +20,6 @@ function BrandMark() {
   );
 }
 
-function CeladonBrandMark() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 48 48">
-      <circle cx="24" cy="24" fill="none" r="21" stroke="currentColor" />
-      <circle
-        cx="24"
-        cy="24"
-        fill="none"
-        opacity="0.55"
-        r="17.5"
-        stroke="currentColor"
-      />
-      <path
-        d="M16 13h16M14 20h20M18 27h12M15 35h18M19 13c0 12 2 19 5 23m6-23c0 11-2 18-6 23"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.4"
-      />
-    </svg>
-  );
-}
-
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
@@ -50,13 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="app-header-container flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <span className="brand-mark grid h-10 w-10 place-items-center">
-              <Feather className="brand-mark-base" size={17} />
-              <span className="brand-mark-mint">
-                <BrandMark />
-              </span>
-              <span className="brand-mark-celadon">
-                <CeladonBrandMark />
-              </span>
+              <BrandMark />
             </span>
             <span>
               <b className="display tracking-[.18em]">叙界</b>
