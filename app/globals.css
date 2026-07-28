@@ -21,6 +21,9 @@
   --button-background: var(--panel2);
   --primary-background: var(--paper);
   --primary-foreground: var(--ink);
+  --highlight-background: var(--gold);
+  --highlight-foreground: #111;
+  --highlight-border: var(--gold);
   --selection-background: #b89b6240;
   --focus-ring: #b89b6218;
   --panel-radius: 14px;
@@ -127,9 +130,9 @@ a {
   font-weight: 650;
 }
 .btn-gold {
-  background: var(--gold);
-  color: #111;
-  border-color: var(--gold);
+  background: var(--highlight-background);
+  color: var(--highlight-foreground);
+  border-color: var(--highlight-border);
   font-weight: 650;
 }
 .btn-danger {
@@ -798,6 +801,9 @@ header {
   --input-background: #fffefb;
   --primary-background: #18352d;
   --primary-foreground: #f7faf4;
+  --highlight-background: #e3f2d4;
+  --highlight-foreground: #315b22;
+  --highlight-border: #c9dfb8;
   --selection-background: #b9e76966;
   --focus-ring: #79cfa638;
   --panel-radius: 16px;
@@ -822,6 +828,9 @@ header {
   --button-background: #f7f8f4;
   --primary-background: #173c3a;
   --primary-foreground: #f3f5f1;
+  --highlight-background: #dceae5;
+  --highlight-foreground: #28514e;
+  --highlight-border: #bfd4ce;
   --selection-background: #a9c4b566;
   --focus-ring: #9a765224;
   --panel-radius: 3px;
