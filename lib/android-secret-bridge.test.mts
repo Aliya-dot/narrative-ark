@@ -11,10 +11,7 @@ const repository = await readFile(
   new URL("lib/ai-config-repository.ts", root),
   "utf8",
 );
-const settings = await readFile(
-  new URL("app/settings/page.tsx", root),
-  "utf8",
-);
+const settings = await readFile(new URL("app/settings/page.tsx", root), "utf8");
 
 for (const command of [
   "secure_secret_get",
@@ -28,5 +25,8 @@ for (const command of [
 assert.match(rust, /spawn_blocking/);
 assert.match(repository, /sessionConfigs/);
 assert.match(settings, /CONFIG_STORAGE_TIMEOUT_MS = 30_000/);
+assert.doesNotMatch(capabilities, /using encrypted fallback/);
+assert.match(capabilities, /Android 系统安全存储不可用，API Key 未保存/);
+assert.doesNotMatch(capabilities, /legacyEncryptedSecretStore!\.set/);
 
 console.log("Android native secret bridge regression tests passed");

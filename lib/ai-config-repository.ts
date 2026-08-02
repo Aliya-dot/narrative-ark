@@ -66,7 +66,7 @@ export function createAIConfigRepository(
 
     storageDescription() {
       return platform.secrets.available
-        ? "API 配置已保存，API Key 已写入设备加密凭据存储（系统 KeyStore 优先）"
+        ? "API 配置已保存，API Key 已写入系统加密凭据存储"
         : "API 配置已保存在当前浏览器";
     },
   };

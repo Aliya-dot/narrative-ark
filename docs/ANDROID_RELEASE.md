@@ -9,7 +9,7 @@
 - 商店格式：签名 AAB
 - CPU 架构：ARM64 与 ARMv7
 - 当前版本：`0.1.5`
-- 当前 `versionCode`：`1007`（Android KeyStore 优先、加密凭据兼容仓与 API 成功态修正版）
+- 当前 `versionCode`：`1007`（Android KeyStore 失败关闭、旧加密凭据只读迁移与 API 成功态修正版）
 
 原生工程位于 `src-tauri/gen/android/`。项目只申请网络访问和网络状态权限，不申请传统的外部存储权限；项目包、存档和世界书通过系统文件选择器导入导出。
 

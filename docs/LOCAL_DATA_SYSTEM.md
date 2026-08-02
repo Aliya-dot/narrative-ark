@@ -32,6 +32,8 @@ backups/
 
 API Key 不属于这些表；`configs` 仅存 `credentialRef`。
 
+原生 SQLite 事务请求按进入顺序串行执行；两个无关的异步事务不会共享嵌套深度或同时占用同一连接。自动备份的 dirty 状态由事务协调器管理，只在事务成功提交后调度快照；回滚后队列继续处理下一笔事务。
+
 ## 版本迁移
 
 SQL 迁移保存在 `src-tauri/migrations/`，Rust 组合根以递增整数版本注册。启动时：

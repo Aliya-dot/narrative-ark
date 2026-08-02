@@ -28,6 +28,13 @@ export interface PlatformCapabilities {
   secrets: SecretStore;
 }
 
+export class SecureSecretStorageError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause });
+    this.name = "SecureSecretStorageError";
+  }
+}
+
 export type PlatformAdapterLoaders = {
   tauriFetch?: () => Promise<typeof globalThis.fetch>;
   keyring?: () => Promise<{
@@ -36,6 +43,15 @@ export type PlatformAdapterLoaders = {
     deletePasswords(keys: string[]): Promise<void>;
     passwordExists(key: string): Promise<boolean>;
   }>;
+  androidSecretInvoke?: <T>(
+    command: string,
+    args: Record<string, unknown>,
+  ) => Promise<T>;
+  legacyEncryptedSecretStore?: () => {
+    get(key: string): Promise<string | null>;
+    remove(key: string): Promise<void>;
+    has(key: string): Promise<boolean>;
+  };
 };
 
 const unavailableSecrets: SecretStore = {
@@ -108,14 +124,17 @@ export function createPlatformCapabilities(
     (async () => await import("tauri-plugin-keyring-store-api"));
   const useNativeAndroidSecretBridge =
     runtime.platform === "android" && !options.loaders?.keyring;
-  const encryptedSecretFallback = useNativeAndroidSecretBridge
-    ? createEncryptedSecretFallback()
+  const legacyEncryptedSecretStore = useNativeAndroidSecretBridge
+    ? (options.loaders?.legacyEncryptedSecretStore?.() ??
+      createLegacyEncryptedSecretStore())
     : undefined;
   async function invokeAndroidSecret<T>(
     command: string,
     args: Record<string, unknown>,
   ) {
-    const { invoke } = await import("@tauri-apps/api/core");
+    const invoke =
+      options.loaders?.androidSecretInvoke ??
+      (await import("@tauri-apps/api/core")).invoke;
     return await withTimeout(
       invoke<T>(command, args),
       8_000,
@@ -142,16 +161,44 @@ export function createPlatformCapabilities(
         available: true,
         async get(key) {
           if (useNativeAndroidSecretBridge) {
+            let secured: string | null;
             try {
-              const secured = await invokeAndroidSecret<string | null>(
+              secured = await invokeAndroidSecret<string | null>(
                 "secure_secret_get",
                 { key },
               );
-              return secured ?? (await encryptedSecretFallback!.get(key));
             } catch (error) {
-              console.warn("Android Keystore read failed; using encrypted fallback", error);
-              return await encryptedSecretFallback!.get(key);
+              throw new SecureSecretStorageError(
+                "Android 系统安全存储读取失败，API Key 未读取，请重试",
+                error,
+              );
             }
+            if (secured !== null) return secured;
+            let legacy: string | null;
+            try {
+              legacy = await legacyEncryptedSecretStore!.get(key);
+            } catch (error) {
+              console.warn("Legacy encrypted API Key lookup failed", error);
+              return null;
+            }
+            if (legacy === null) return null;
+            try {
+              await invokeAndroidSecret<void>("secure_secret_set", {
+                key,
+                value: legacy,
+              });
+            } catch (error) {
+              throw new SecureSecretStorageError(
+                "Android 系统安全存储迁移失败，旧 API Key 未迁移，请重试",
+                error,
+              );
+            }
+            try {
+              await legacyEncryptedSecretStore!.remove(key);
+            } catch (error) {
+              console.warn("Legacy encrypted API Key cleanup failed", error);
+            }
+            return legacy;
           }
           const keyring = await keyringLoader();
           return (await keyring.getPasswords([key]))[0] ?? null;
@@ -163,13 +210,16 @@ export function createPlatformCapabilities(
                 key,
                 value,
               });
-              await encryptedSecretFallback!.remove(key);
             } catch (error) {
-              console.warn(
-                "Android Keystore write failed; using encrypted fallback",
+              throw new SecureSecretStorageError(
+                "Android 系统安全存储不可用，API Key 未保存，请检查设备锁屏安全设置后重试",
                 error,
               );
-              await encryptedSecretFallback!.set(key, value);
+            }
+            try {
+              await legacyEncryptedSecretStore!.remove(key);
+            } catch (error) {
+              console.warn("Legacy encrypted API Key cleanup failed", error);
             }
             return;
           }
@@ -181,9 +231,12 @@ export function createPlatformCapabilities(
             try {
               await invokeAndroidSecret<void>("secure_secret_remove", { key });
             } catch (error) {
-              console.warn("Android Keystore remove failed", error);
+              throw new SecureSecretStorageError(
+                "Android 系统安全存储清除失败，API Key 仍保留在设备中，请重试",
+                error,
+              );
             }
-            await encryptedSecretFallback!.remove(key);
+            await legacyEncryptedSecretStore!.remove(key);
             return;
           }
           const keyring = await keyringLoader();
@@ -191,16 +244,27 @@ export function createPlatformCapabilities(
         },
         async has(key) {
           if (useNativeAndroidSecretBridge) {
+            let secured: boolean;
             try {
-              if (
-                await invokeAndroidSecret<boolean>("secure_secret_has", { key })
-              ) {
-                return true;
-              }
+              secured = await invokeAndroidSecret<boolean>(
+                "secure_secret_has",
+                {
+                  key,
+                },
+              );
             } catch (error) {
-              console.warn("Android Keystore probe failed", error);
+              throw new SecureSecretStorageError(
+                "Android 系统安全存储检查失败，请重试",
+                error,
+              );
             }
-            return await encryptedSecretFallback!.has(key);
+            if (secured) return true;
+            try {
+              return await legacyEncryptedSecretStore!.has(key);
+            } catch (error) {
+              console.warn("Legacy encrypted API Key probe failed", error);
+              return false;
+            }
           }
           const keyring = await keyringLoader();
           return keyring.passwordExists(key);
@@ -224,4 +288,4 @@ export function setPlatformCapabilitiesForTests(
   activePlatform = platform;
 }
 import { withTimeout } from "../promise-timeout";
-import { createEncryptedSecretFallback } from "./encrypted-secret-fallback";
+import { createLegacyEncryptedSecretStore } from "./encrypted-secret-fallback";

@@ -37,8 +37,42 @@ export interface ExportRecord extends LocalEntity {
 
 let backendOverride: LocalDataBackend | undefined;
 let backendPromise: Promise<LocalDataBackend> | undefined;
-let transactionDepth = 0;
-let transactionDirty = false;
+
+class TransactionCoordinator {
+  private active = false;
+  private dirty = false;
+  private tail: Promise<void> = Promise.resolve();
+
+  markMutation() {
+    if (this.active) {
+      this.dirty = true;
+      return;
+    }
+    scheduleAutomaticBackup();
+  }
+
+  async run<T>(operation: () => Promise<T>) {
+    const previous = this.tail;
+    let release = () => {};
+    this.tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    this.active = true;
+    this.dirty = false;
+    try {
+      const result = await operation();
+      if (this.dirty) scheduleAutomaticBackup();
+      return result;
+    } finally {
+      this.active = false;
+      this.dirty = false;
+      release();
+    }
+  }
+}
+
+const transactionCoordinator = new TransactionCoordinator();
 
 async function createBackend(): Promise<LocalDataBackend> {
   if (!isTauriRuntime()) return new BrowserLocalDataBackend();
@@ -63,11 +97,7 @@ export function setLocalDataBackendForTests(
 }
 
 function markMutation() {
-  if (transactionDepth > 0) {
-    transactionDirty = true;
-    return;
-  }
-  scheduleAutomaticBackup();
+  transactionCoordinator.markMutation();
 }
 
 class OrderedCollection<
@@ -273,27 +303,12 @@ class NarrativeDatabase {
       .flatMap((value) =>
         value instanceof DataTable ? [value.name] : [],
       ) as LocalTableName[];
-    const backend = await getLocalDataBackend();
-    transactionDepth += 1;
-    const parentDirty = transactionDirty;
-    transactionDirty = false;
-    try {
-      const result = await backend.transaction(tables, async () =>
+    return transactionCoordinator.run(async () => {
+      const backend = await getLocalDataBackend();
+      return await backend.transaction(tables, async () =>
         (operation as () => T | Promise<T>)(),
       );
-      const changed = transactionDirty;
-      transactionDirty = parentDirty;
-      transactionDepth -= 1;
-      if (changed) {
-        if (transactionDepth > 0) transactionDirty = true;
-        else scheduleAutomaticBackup();
-      }
-      return result;
-    } catch (error) {
-      transactionDirty = parentDirty;
-      transactionDepth -= 1;
-      throw error;
-    }
+    });
   }
 }
 

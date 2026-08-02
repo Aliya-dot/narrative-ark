@@ -69,7 +69,7 @@ export async function decryptSecretValue(
   return new TextDecoder().decode(plaintext);
 }
 
-export function createEncryptedSecretFallback() {
+export function createLegacyEncryptedSecretStore() {
   return {
     async get(id: string) {
       const database = await openDatabase();
@@ -80,22 +80,6 @@ export function createEncryptedSecretFallback() {
         )) as EncryptedSecretRecord | undefined;
         if (!record) return null;
         return await decryptSecretValue(record);
-      } finally {
-        database.close();
-      }
-    },
-
-    async set(id: string, value: string) {
-      const encrypted = await encryptSecretValue(value);
-      const database = await openDatabase();
-      try {
-        const transaction = database.transaction(STORE_NAME, "readwrite");
-        transaction.objectStore(STORE_NAME).put({
-          id,
-          ...encrypted,
-          updatedAt: new Date().toISOString(),
-        } satisfies EncryptedSecretRecord);
-        await transactionDone(transaction);
       } finally {
         database.close();
       }

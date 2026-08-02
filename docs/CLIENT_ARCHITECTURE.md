@@ -49,6 +49,7 @@ HTTP Adapter，Next 路由仅作为旧 Web 入口的兼容 Adapter。
 `ai-config-repository.ts` 将非敏感模型配置写入统一本地数据接口，并只保存
 `credentialRef`。API Key 在 Windows 写入 Credential Manager，在 Android 写入
 Android Keystore。旧浏览器记录迁移到 SQLite 时会清空其中的明文密钥字段。
+Android Keystore 读写失败时采用失败关闭并向设置页返回明确错误，不写入降级存储。旧版加密 IndexedDB 凭据仅在 Keystore 正常响应后执行一次只读迁移，迁移成功即删除旧记录。
 
 ## 本地数据持久化
 

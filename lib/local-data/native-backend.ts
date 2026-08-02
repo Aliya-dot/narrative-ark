@@ -14,6 +14,11 @@ type NativeRecordQuery = {
   descending?: boolean;
 };
 
+type NativeInvoke = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
+
 function normalizeNativeError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = new Error(message.replace(/^constraint:\s*/, ""));
@@ -23,15 +28,21 @@ function normalizeNativeError(error: unknown): never {
 
 export class NativeSqliteBackend implements LocalDataBackend {
   readonly kind = "sqlite" as const;
-  private transactionDepth = 0;
+  private readonly invokeCommand: NativeInvoke;
+  private transactionTail: Promise<void> = Promise.resolve();
+
+  constructor(invokeCommand: NativeInvoke = invoke) {
+    this.invokeCommand = invokeCommand;
+  }
 
   async initialize() {
-    await invoke("local_db_initialize");
+    await this.invokeCommand("local_db_initialize");
   }
 
   async get<T extends LocalEntity>(table: LocalTableName, id: string) {
     return (
-      ((await invoke("local_db_get", { table, id })) as T | null) ?? undefined
+      ((await this.invokeCommand("local_db_get", { table, id })) as T | null) ??
+      undefined
     );
   }
 
@@ -40,7 +51,7 @@ export class NativeSqliteBackend implements LocalDataBackend {
     query: LocalQuery = {},
   ) {
     const input: NativeRecordQuery = { table, ...query };
-    return invoke<T[]>("local_db_query", input);
+    return this.invokeCommand<T[]>("local_db_query", input);
   }
 
   async put<T extends LocalEntity>(
@@ -49,7 +60,7 @@ export class NativeSqliteBackend implements LocalDataBackend {
     addOnly = false,
   ) {
     try {
-      await invoke("local_db_put", { table, record, addOnly });
+      await this.invokeCommand("local_db_put", { table, record, addOnly });
       return record.id;
     } catch (error) {
       normalizeNativeError(error);
@@ -62,7 +73,11 @@ export class NativeSqliteBackend implements LocalDataBackend {
     addOnly = false,
   ) {
     try {
-      await invoke("local_db_bulk_put", { table, records, addOnly });
+      await this.invokeCommand("local_db_bulk_put", {
+        table,
+        records,
+        addOnly,
+      });
     } catch (error) {
       normalizeNativeError(error);
     }
@@ -73,53 +88,80 @@ export class NativeSqliteBackend implements LocalDataBackend {
     id: string,
     changes: Partial<T>,
   ) {
-    return invoke<number>("local_db_update", { table, id, changes });
+    return this.invokeCommand<number>("local_db_update", {
+      table,
+      id,
+      changes,
+    });
   }
 
   async delete(table: LocalTableName, id: string) {
-    await invoke("local_db_delete", { table, id });
+    await this.invokeCommand("local_db_delete", { table, id });
   }
 
   async bulkDelete(table: LocalTableName, ids: readonly string[]) {
-    await invoke("local_db_bulk_delete", { table, ids });
+    await this.invokeCommand("local_db_bulk_delete", { table, ids });
   }
 
   deleteWhere(table: LocalTableName, field: string, value: string) {
-    return invoke<number>("local_db_delete_where", { table, field, value });
+    return this.invokeCommand<number>("local_db_delete_where", {
+      table,
+      field,
+      value,
+    });
   }
 
   async clear(table: LocalTableName) {
-    await invoke("local_db_clear", { table });
+    await this.invokeCommand("local_db_clear", { table });
   }
 
   primaryKeys(table: LocalTableName) {
-    return invoke<string[]>("local_db_primary_keys", { table });
+    return this.invokeCommand<string[]>("local_db_primary_keys", { table });
+  }
+
+  private async enqueueTransaction<T>(operation: () => Promise<T>) {
+    const previous = this.transactionTail;
+    let release = () => {};
+    this.transactionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async transaction<T>(
     _tables: readonly LocalTableName[],
     operation: () => Promise<T>,
   ) {
-    const outermost = this.transactionDepth === 0;
-    if (outermost) await invoke("local_db_begin");
-    this.transactionDepth += 1;
-    try {
-      const result = await operation();
-      this.transactionDepth -= 1;
-      if (outermost) await invoke("local_db_commit");
-      return result;
-    } catch (error) {
-      this.transactionDepth -= 1;
-      if (outermost) await invoke("local_db_rollback");
-      throw error;
-    }
+    return this.enqueueTransaction(async () => {
+      await this.invokeCommand("local_db_begin");
+      try {
+        const result = await operation();
+        await this.invokeCommand("local_db_commit");
+        return result;
+      } catch (error) {
+        try {
+          await this.invokeCommand("local_db_rollback");
+        } catch (rollbackError) {
+          throw new Error(
+            `本地数据库事务与回滚均失败：${String(rollbackError)}`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    });
   }
 
   metadataGet(key: string) {
-    return invoke<string | null>("local_db_metadata_get", { key });
+    return this.invokeCommand<string | null>("local_db_metadata_get", { key });
   }
 
   async metadataSet(key: string, value: string) {
-    await invoke("local_db_metadata_set", { key, value });
+    await this.invokeCommand("local_db_metadata_set", { key, value });
   }
 }
