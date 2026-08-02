@@ -82,11 +82,13 @@ jobs:
           releaseBody: |
             叙界 / Narrative Ark 早期测试版。
 
-            - Windows x64：NSIS 安装程序与 MSI 安装包
-            - Android：可直接安装的签名 APK 与应用商店用 AAB
+            - Windows x64：`Narrative-Ark___VERSION___Windows-x64.exe`
+            - Android：`Narrative-Ark___VERSION___Android.apk`
+            - 源码：GitHub 自动生成的 Source code (zip) 与 Source code (tar.gz)
             - 系统要求：Windows 10+ / Android 9+
             - Windows 包尚无 Authenticode 代码签名，可能触发 SmartScreen
             - 用户项目与存档位于安装目录之外，升级不会覆盖
+            - 校验：将本地 SHA-256 与资源右侧显示的摘要对照
 
             [完整更新日志](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) ·
             [下载页](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/) ·
@@ -118,14 +120,18 @@ jobs:
           if (-not $installer) { throw "NSIS installer not found" }
           ./scripts/windows-release-smoke.ps1 -CurrentInstaller $installer.FullName
 
-      - name: Upload verification manifest
+      - name: Upload normalized Windows installer
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >
-          gh release upload "${{ steps.release_meta.outputs.tag }}"
-          release-artifacts/windows-x64-manifest.json
-          --clobber
+        run: |
+          $installer = Get-ChildItem `
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis `
+            -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer not found" }
+          $publicInstaller = "release-artifacts/Narrative-Ark_${{ steps.release_meta.outputs.version }}_Windows-x64.exe"
+          Copy-Item $installer.FullName $publicInstaller
+          gh release upload "${{ steps.release_meta.outputs.tag }}" $publicInstaller --clobber
 
   build-android:
     needs: build-windows
@@ -190,36 +196,49 @@ jobs:
       - name: Verify Android signatures and metadata
         run: npm run release:verify:android
 
-      - name: Stage Android release assets
+      - name: Stage public Android APK
         run: |
           mkdir -p release-artifacts/android
           apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*release.apk' | head -n 1)"
           aab="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name '*release.aab' | head -n 1)"
           test -n "${apk}" && test -n "${aab}"
-          cp "${apk}" "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_android-universal.apk"
-          cp "${aab}" "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_android.aab"
+          cp "${apk}" "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_Android.apk"
 
-      - name: Upload Android assets to draft release
+      - name: Upload normalized Android APK to draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.build-windows.outputs.tag }}" \
-            release-artifacts/android/* \
-            release-artifacts/android-release-manifest.json \
+            "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_Android.apk" \
             --clobber
 
   publish-release:
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     steps:
-      - name: Publish tested prerelease
+      - name: Keep only public EXE and APK assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          keep_windows="Narrative-Ark_${{ needs.build-windows.outputs.version }}_Windows-x64.exe"
+          keep_android="Narrative-Ark_${{ needs.build-windows.outputs.version }}_Android.apk"
+          gh api "repos/${{ github.repository }}/releases/tags/${{ needs.build-windows.outputs.tag }}" \
+            --jq '.assets[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r asset_id asset_name; do
+            if [[ "${asset_name}" != "${keep_windows}" && "${asset_name}" != "${keep_android}" ]]; then
+              gh api --method DELETE "repos/${{ github.repository }}/releases/assets/${asset_id}"
+            fi
+          done
+
+      - name: Publish tested release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >
           gh release edit "${{ needs.build-windows.outputs.tag }}"
           --repo "${{ github.repository }}"
           --draft=false
-          --prerelease
+          --prerelease=false
+          --latest
 
   publish-mirror:
     needs: [build-windows, publish-release]
@@ -238,20 +257,14 @@ jobs:
         run: |
           mkdir -p mirror-payload
           gh release download "${{ needs.build-windows.outputs.tag }}" \
+            --pattern "Narrative-Ark_${{ needs.build-windows.outputs.version }}_Windows-x64.exe" \
+            --pattern "Narrative-Ark_${{ needs.build-windows.outputs.version }}_Android.apk" \
             --dir mirror-payload
-
-      - name: Generate mirror updater manifest
-        if: ${{ env.MIRROR_PUBLIC_BASE_URL != '' }}
-        run: |
-          node scripts/rewrite-updater-manifest.mjs \
-            --input mirror-payload/latest.json \
-            --output mirror-payload/latest.mirror.json \
-            --base-url "${MIRROR_PUBLIC_BASE_URL}/narrative-ark/releases/${{ needs.build-windows.outputs.tag }}"
 
       - name: Preserve mirror payload as workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: narrative-ark-windows-mirror-${{ needs.build-windows.outputs.version }}
+          name: narrative-ark-installers-${{ needs.build-windows.outputs.version }}
           path: mirror-payload/
 
       - name: Upload to S3-compatible domestic mirror
@@ -266,12 +279,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ env.MIRROR_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          rm mirror-payload/latest.json
-          mv mirror-payload/latest.mirror.json mirror-payload/latest.json
           aws s3 sync mirror-payload \
             "s3://${MIRROR_BUCKET}/narrative-ark/releases/${{ needs.build-windows.outputs.tag }}/" \
             --endpoint-url "${MIRROR_ENDPOINT}"
-          aws s3 cp mirror-payload/latest.json \
-            "s3://${MIRROR_BUCKET}/narrative-ark/latest.json" \
-            --endpoint-url "${MIRROR_ENDPOINT}" \
-            --cache-control "no-cache"

@@ -37,18 +37,19 @@ git push origin v0.1.5
 `.github/workflows/release.yml` 会：
 
 1. 运行 lint、类型检查与测试；
-2. 构建并验证 Windows NSIS/MSI 与更新签名；
+2. 在内部构建并验证 Windows 安装产物与更新签名；
 3. 在 Windows runner 执行安装、升级、卸载和存档保留测试；
-4. 构建并验证签名 Android APK/AAB；
-5. 发布 GitHub prerelease，并按配置同步下载镜像。
+4. 在内部构建并验证签名 Android APK/AAB；
+5. 清理草稿资源，只保留统一命名的 Windows EXE 和 Android APK；
+6. 发布正式 GitHub Release，并按配置同步这两个安装包到下载镜像。
 
 也可在 Actions 页面手动运行工作流。失败时保持 draft Release，修复后重新运行；不要把未
 验证产物改成公开 Release。
 
 ## 4. 发布后检查
 
-- 下载页能显示版本与各平台资产；
-- SHA-256 清单与实际文件一致；
-- Windows 更新端点的 `latest.json` 可访问；
+- 发行页仅显示 `Narrative-Ark_<版本>_Windows-x64.exe`、
+  `Narrative-Ark_<版本>_Android.apk` 和 GitHub 自动生成的两个源码归档；
+- 本地计算的 SHA-256 与 GitHub 资源右侧显示的摘要一致；
 - Android APK 的版本号、`versionCode` 和签名证书正确；
 - `CHANGELOG.md` 中的版本链接有效。

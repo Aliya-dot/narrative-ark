@@ -2,13 +2,13 @@
 
 ## 产物
 
-发布构建同时生成：
+公开发行只提供：
 
-- NSIS：`*-setup.exe`
-- MSI：`*.msi`
-- Tauri 更新签名：`*.sig`
-- GitHub Releases 更新清单：`latest.json`
-- SHA-256 产物清单：`windows-x64-manifest.json`
+- Windows x64：`Narrative-Ark_<版本>_Windows-x64.exe`
+- GitHub 自动生成的源码 ZIP 与 TAR.GZ
+
+CI 内部仍会生成 NSIS、MSI、Tauri 更新签名与校验清单用于构建验证，但发布前会按
+资源白名单清理；这些内部产物不会出现在公开发行页。
 
 最低系统版本为 Windows 10。安装器使用系统 WebView2；缺失或版本过低时，通过微软 bootstrapper 安装。
 
@@ -50,13 +50,14 @@ release-artifacts/windows-x64-manifest.json
 
 1. 执行 lint、类型检查和全部自动测试；
 2. 构建 Windows x64 NSIS、MSI 和更新签名；
-3. 创建 GitHub draft prerelease；
+3. 创建 GitHub draft Release；
 4. 在干净 Windows runner 上执行静默安装、覆盖升级、卸载和存档目录保留测试；
-5. 测试通过后发布 prerelease。
+5. 只保留统一命名的 EXE，测试通过后发布正式 Release。
 
 ## 国内下载镜像
 
-国内镜像使用任意兼容 S3 API 的对象存储。配置以下 Secrets 后，发布工作流会自动同步安装包、签名、校验清单，并重写镜像版 `latest.json`：
+国内镜像使用任意兼容 S3 API 的对象存储。配置以下 Secrets 后，发布工作流会同步
+公开的 Windows EXE 与 Android APK：
 
 | Secret                     | 示例格式                              |
 | -------------------------- | ------------------------------------- |
@@ -66,7 +67,8 @@ release-artifacts/windows-x64-manifest.json
 | `MIRROR_SECRET_ACCESS_KEY` | `<SECRET_KEY>`                        |
 | `MIRROR_PUBLIC_BASE_URL`   | `https://<DOWNLOAD_HOST>`             |
 
-客户端优先读取国内镜像的 `narrative-ark/latest.json`，镜像返回非成功状态时继续读取 GitHub Releases。
+镜像按版本保存在 `narrative-ark/releases/v<版本>/`。当前公开发行采用手动下载更新，
+不公开 `latest.json`、签名文件或校验清单。
 
 ## 安装、升级、卸载验证
 
@@ -89,6 +91,7 @@ release-artifacts/windows-x64-manifest.json
 
 ## 未签名测试版
 
-早期测试版仅使用 Tauri 更新签名校验下载内容，不包含 Windows Authenticode 代码签名。通过浏览器下载时 Windows 可能显示 SmartScreen 提示。
+早期测试版不包含 Windows Authenticode 代码签名。通过浏览器下载时 Windows 可能显示
+SmartScreen 提示；用户可先比对 GitHub 显示的 SHA-256 摘要，再运行安装程序。
 
 正式版接入代码签名证书后，在 `bundle.windows` 中配置证书或 `signCommand`，GitHub 工作流继续沿用同一构建和验证步骤。

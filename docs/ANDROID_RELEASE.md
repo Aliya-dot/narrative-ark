@@ -6,7 +6,8 @@
 - 最低版本：Android 9 / API 28
 - 编译与目标版本：API 36
 - 首发格式：签名通用 APK，可直接下载安装
-- 商店格式：签名 AAB
+- 公开发行格式：签名 APK
+- 内部验证格式：签名 AAB（不上传到公开发行页）
 - CPU 架构：ARM64 与 ARMv7
 - 当前版本：`0.1.5`
 - 当前 `versionCode`：`1007`（Android KeyStore 失败关闭、旧加密凭据只读迁移与 API 成功态修正版）
@@ -90,8 +91,8 @@ src-tauri/gen/android/app/build/outputs/bundle/
 release-artifacts/android-release-manifest.json
 ```
 
-本次已验证成品位于 `release-artifacts/android/`，其中包含可直接安装的 APK、
-应用商店使用的 AAB 和 `SHA256SUMS.txt`。
+CI 内部验证目录会包含 APK、AAB 与校验数据；公开发行只上传统一命名的
+`Narrative-Ark_<版本>_Android.apk`。
 
 ## GitHub Releases
 
@@ -105,7 +106,8 @@ release-artifacts/android-release-manifest.json
 | `ANDROID_KEYSTORE_PASSWORD` | JKS 密码                      |
 | `ANDROID_KEY_PASSWORD`      | 密钥密码；当前与 JKS 密码相同 |
 
-Windows 与 Android 全部验证通过后，工作流才发布 prerelease。首发页面直接提供 APK，同时附带 AAB 供后续 Google Play 或国内应用商店使用；国内下载镜像会同步 APK、AAB 和校验清单。
+Windows 与 Android 全部验证通过后，工作流会清理草稿资源并发布正式 Release。
+公开页面和国内下载镜像只提供签名 APK；AAB 仅保留在 CI 内部验证流程中。
 
 ## 升级规则
 

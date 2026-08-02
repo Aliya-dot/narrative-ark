@@ -43,12 +43,12 @@ jobs:
           New-Item -ItemType Directory -Force release-under-test | Out-Null
           gh release download `
             --repo "${{ github.repository }}" `
-            --pattern "*_x64-setup.exe" `
+            --pattern "Narrative-Ark_*_Windows-x64.exe" `
             --dir release-under-test
       - name: Install, launch, update, uninstall and preserve data
         shell: pwsh
         run: |
-          $installer = Get-ChildItem release-under-test -Filter "*_x64-setup.exe" | Select-Object -First 1
+          $installer = Get-ChildItem release-under-test -Filter "Narrative-Ark_*_Windows-x64.exe" | Select-Object -First 1
           if (-not $installer) { throw "Windows setup executable not found" }
           ./scripts/windows-release-smoke.ps1 -CurrentInstaller $installer.FullName
 

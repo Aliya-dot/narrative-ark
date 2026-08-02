@@ -3,7 +3,7 @@
 > AI 文字冒险创作、世界书管理、持续游玩与多存档客户端。
 
 [![CI](https://github.com/Aliya-dot/narrative-ark/actions/workflows/ci.yml/badge.svg)](https://github.com/Aliya-dot/narrative-ark/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/Aliya-dot/narrative-ark?include_prereleases)](https://github.com/Aliya-dot/narrative-ark/releases)
+[![Release](https://img.shields.io/github/v/release/Aliya-dot/narrative-ark)](https://github.com/Aliya-dot/narrative-ark/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
 [下载最新版](https://Aliya-dot.github.io/narrative-ark/) ·
@@ -25,11 +25,20 @@
 
 安装包统一发布在 [GitHub Releases](https://github.com/Aliya-dot/narrative-ark/releases/latest)：
 
-- Windows x64：NSIS `*-setup.exe`、MSI `*.msi`
-- Android：可直接安装的签名 APK、供应用商店使用的 AAB
-- 每次发布附带 SHA-256 校验清单；Windows 自动更新另有 Tauri 签名
+- Windows x64：`Narrative-Ark_<版本>_Windows-x64.exe`
+- Android：`Narrative-Ark_<版本>_Android.apk`
+- 源码：GitHub 自动生成的 `Source code (zip)` 与 `Source code (tar.gz)`
+
+发行页只保留上述两个安装包和两个源码归档。GitHub 会在安装包右侧显示 SHA-256
+摘要；下载后可在 PowerShell 中执行以下命令，并与页面摘要对照：
+
+```powershell
+Get-FileHash .\Narrative-Ark_<版本>_Windows-x64.exe -Algorithm SHA256
+Get-FileHash .\Narrative-Ark_<版本>_Android.apk -Algorithm SHA256
+```
 
 早期 Windows 测试版尚未配置 Authenticode 证书，可能触发 SmartScreen 提示。
+当前公开发行采用手动下载安装更新；项目与存档位于安装目录之外，覆盖升级不会清除数据。
 
 ## 本地开发
 
@@ -78,8 +87,8 @@ cargo test --lib
 
 版本号同时维护在 `package.json`、`src-tauri/Cargo.toml` 与
 `src-tauri/tauri.conf.json`。推送 `v<版本>` 标签后，GitHub Actions 会运行完整
-检查，构建 Windows NSIS/MSI 与 Android APK/AAB，验证签名和安装行为，最后发布
-GitHub prerelease。详细流程见 [发布指南](docs/RELEASING.md)。
+检查，在内部构建并验证 Windows 与 Android 产物，最后只公开统一命名的 EXE、APK
+和 GitHub 自动生成的源码归档。详细流程见 [发布指南](docs/RELEASING.md)。
 
 ## 支持项目
 

@@ -48,12 +48,16 @@ fetch(api, { headers: { Accept: "application/vnd.github+json" } })
     document.getElementById("release-status").textContent =
       `${release.tag_name} · ${date}`;
     renderAssets("windows-assets", release.assets, [
-      { pattern: /setup.*\.exe$|\.exe$/i, label: "下载 EXE 安装程序" },
-      { pattern: /\.msi$/i, label: "下载 MSI 安装包" },
+      {
+        pattern: /Narrative-Ark_.*_Windows-x64\.exe$/i,
+        label: "下载 Windows x64 EXE",
+      },
     ]);
     renderAssets("android-assets", release.assets, [
-      { pattern: /\.apk$/i, label: "下载 APK" },
-      { pattern: /\.aab$/i, label: "下载 AAB" },
+      {
+        pattern: /Narrative-Ark_.*_Android\.apk$/i,
+        label: "下载 Android APK",
+      },
     ]);
   })
   .catch(() => {
