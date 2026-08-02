@@ -432,6 +432,7 @@ export interface AIConfig {
   id: string;
   provider: string;
   apiKey: string;
+  credentialRef?: string;
   baseUrl: string;
   model: string;
   maxTokens: number;

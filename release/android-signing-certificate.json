@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "applicationId": "com.narrativeark.client",
+  "keyAlias": "narrative-ark-release",
+  "certificateSha1": "65:C1:57:49:8F:AA:EC:21:D1:33:C7:1C:AB:63:0A:37:E6:58:AC:0C",
+  "certificateSha256": "44:18:8F:F6:D1:72:2D:BF:11:44:5B:B7:04:1E:99:CC:5F:88:EA:93:D2:7D:FA:4F:EB:83:EE:BF:80:77:43:51",
+  "minimumSdk": 28,
+  "targetSdk": 36,
+  "firstVersionCode": 1000
+}

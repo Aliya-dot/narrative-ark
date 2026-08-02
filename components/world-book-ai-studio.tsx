@@ -6,6 +6,7 @@ import { Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { assistWorldBookEntry, generateWorldBookDraft } from "@/lib/ai-client";
 import { db, uid } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type {
   AIConfig,
   WorldBook,
@@ -71,7 +72,7 @@ export function WorldBookAiStudio({
   useEffect(() => {
     if (!open) return;
     setMode(initialMode);
-    void Promise.all([db.configs.get("active"), db.drafts.get(draftKey)]).then(
+    void Promise.all([loadAIConfig(), db.drafts.get(draftKey)]).then(
       ([nextConfig, stored]) => {
         setConfig(nextConfig);
         const aiDraft = stored?.value as WorldBookAiDraft | undefined;

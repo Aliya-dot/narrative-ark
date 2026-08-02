@@ -19,6 +19,7 @@ import {
   Unlock,
 } from "lucide-react";
 import { db, uid } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type { GenerationDraft, WorldBook } from "@/lib/types";
 import type {
   AIConfig,
@@ -56,6 +57,10 @@ import {
   type CreationIdeaCandidate,
 } from "@/components/creation-ai-tools";
 import { bindingForWorldBook, WORLD_BOOK_BUDGETS } from "@/lib/world-book";
+import {
+  replaceCreationWorkspace,
+  saveCreationWorkspace,
+} from "@/lib/creation-workspace-storage";
 const schema = z.object({
   title: z.string(),
   idea: z.string().min(8, "至少写 8 个字，让 AI 理解你的想法"),
@@ -126,6 +131,7 @@ export default function Create() {
   const [meta, setMeta] = useState<CreationDraftMeta>(emptyCreationMeta);
   const metaRef = useRef(meta);
   const loaded = useRef(false);
+  const draftSaveFailed = useRef(false);
   const requestController = useRef<AbortController | null>(null);
   const [busyField, setBusyField] = useState<string>();
   const [pageBusy, setPageBusy] = useState<"page" | "ideas" | null>(null);
@@ -179,63 +185,75 @@ export default function Create() {
   const selectedWorldBook = worldBooks.find(
     (book) => book.id === liveDraft.worldBinding?.worldBookId,
   );
+  function observeDraftWrite(result: { ok: boolean }) {
+    if (result.ok) {
+      draftSaveFailed.current = false;
+      return;
+    }
+    if (draftSaveFailed.current) return;
+    draftSaveFailed.current = true;
+    toast.error("创建草稿自动保存失败，请先保留当前页面并检查浏览器存储");
+  }
   useEffect(() => {
+    let active = true;
     Promise.all([
       db.drafts.get("creation"),
-      db.configs.get("active"),
+      loadAIConfig(),
       db.worldBooks.orderBy("updatedAt").reverse().toArray(),
-    ]).then(([draftRecord, activeConfig, storedWorldBooks]) => {
-      setConfig(activeConfig);
-      setWorldBooks(
-        storedWorldBooks.filter((book) => book.status !== "archived"),
-      );
-      const workspace = normalizeCreationWorkspace(draftRecord?.value);
-      if (workspace) {
-        reset(workspace.form);
-        setMode(workspace.form.creationMode);
-        setStep(workspace.meta.step || 0);
-        setMeta(workspace.meta);
-        metaRef.current = workspace.meta;
-        toast.success("已恢复上次未完成的创建草稿");
-      }
-      const requestedWorldBookId = new URLSearchParams(
-        window.location.search,
-      ).get("worldBook");
-      const requestedWorldBook = storedWorldBooks.find(
-        (book) =>
-          book.id === requestedWorldBookId && book.status !== "archived",
-      );
-      if (requestedWorldBook) {
-        const requestedMode = workspace?.form.creationMode || "simple";
-        setMode(requestedMode);
-        setValue("creationMode", requestedMode);
-        setValue("worldBinding", bindingForWorldBook(requestedWorldBook));
-        setValue("worldBookPreview", {
-          name: requestedWorldBook.name,
-          coreSummary: requestedWorldBook.coreSummary,
-        });
-      }
-      loaded.current = true;
-    });
+    ])
+      .then(([draftRecord, activeConfig, storedWorldBooks]) => {
+        if (!active) return;
+        setConfig(activeConfig);
+        setWorldBooks(
+          storedWorldBooks.filter((book) => book.status !== "archived"),
+        );
+        const workspace = normalizeCreationWorkspace(draftRecord?.value);
+        if (workspace) {
+          reset(workspace.form);
+          setMode(workspace.form.creationMode);
+          setStep(workspace.meta.step || 0);
+          setMeta(workspace.meta);
+          metaRef.current = workspace.meta;
+          toast.success("已恢复上次未完成的创建草稿");
+        }
+        const requestedWorldBookId = new URLSearchParams(
+          window.location.search,
+        ).get("worldBook");
+        const requestedWorldBook = storedWorldBooks.find(
+          (book) =>
+            book.id === requestedWorldBookId && book.status !== "archived",
+        );
+        if (requestedWorldBook) {
+          const requestedMode = workspace?.form.creationMode || "simple";
+          setMode(requestedMode);
+          setValue("creationMode", requestedMode);
+          setValue("worldBinding", bindingForWorldBook(requestedWorldBook));
+          setValue("worldBookPreview", {
+            name: requestedWorldBook.name,
+            coreSummary: requestedWorldBook.coreSummary,
+          });
+        }
+      })
+      .catch(() => {
+        if (active) toast.error("创建工作区加载失败，本次将使用空白表单");
+      })
+      .finally(() => {
+        if (active) loaded.current = true;
+      });
+    return () => {
+      active = false;
+    };
   }, [reset, setValue]);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const sub = watch((value) => {
       if (!loaded.current) return;
       clearTimeout(timer);
-      timer = setTimeout(
-        () =>
-          db.drafts.put({
-            id: "creation",
-            value: {
-              kind: "creation-workspace-v1",
-              form: value,
-              meta: metaRef.current,
-            },
-            updatedAt: new Date().toISOString(),
-          }),
-        250,
-      );
+      timer = setTimeout(() => {
+        void saveCreationWorkspace(db.drafts, value, metaRef.current).then(
+          observeDraftWrite,
+        );
+      }, 250);
     });
     return () => {
       clearTimeout(timer);
@@ -250,15 +268,9 @@ export default function Create() {
       const next = updater(current);
       metaRef.current = next;
       if (loaded.current) {
-        void db.drafts.put({
-          id: "creation",
-          value: {
-            kind: "creation-workspace-v1",
-            form: getValues(),
-            meta: next,
-          },
-          updatedAt: new Date().toISOString(),
-        });
+        void saveCreationWorkspace(db.drafts, getValues(), next).then(
+          observeDraftWrite,
+        );
       }
       return next;
     });
@@ -648,12 +660,9 @@ export default function Create() {
       ...data,
       creationMeta: { lockedFields: meta.lockedFields },
     };
-    await db.drafts.put({
-      id,
-      value: generationDraft,
-      updatedAt: new Date().toISOString(),
+    await db.transaction("rw", db.drafts, () => {
+      return replaceCreationWorkspace(db.drafts, id, generationDraft);
     });
-    await db.drafts.delete("creation");
     toast.success("创作设定已保存");
     router.push(`/generate/${id}`);
   }

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <filter id="grain" x="-15%" y="-15%" width="130%" height="130%">
+    <feTurbulence
+      type="fractalNoise"
+      baseFrequency=".52"
+      numOctaves="4"
+      seed="37"
+      stitchTiles="stitch"
+    />
+    <feColorMatrix
+      values="
+        0 0 0 0 .39
+        0 0 0 0 .33
+        0 0 0 0 .23
+        0 0 0 .12 0"
+    />
+  </filter>
+  <filter id="fiber" x="-15%" y="-15%" width="130%" height="130%">
+    <feTurbulence
+      type="turbulence"
+      baseFrequency=".012 .18"
+      numOctaves="2"
+      seed="11"
+      stitchTiles="stitch"
+    />
+    <feColorMatrix
+      values="
+        0 0 0 0 .46
+        0 0 0 0 .39
+        0 0 0 0 .27
+        0 0 0 .075 0"
+    />
+  </filter>
+  <rect width="240" height="240" filter="url(#grain)" opacity=".72"/>
+  <rect width="240" height="240" filter="url(#fiber)" opacity=".54"/>
+  <g fill="none" stroke="#8f8066" stroke-linecap="round" opacity=".12">
+    <path d="M13 42c18-2 29 3 47 1s32-6 51-2" stroke-width=".45"/>
+    <path d="M142 28c16 1 33 6 62 2" stroke-width=".35"/>
+    <path d="M32 127c31 3 48-3 76 0s47 5 70 1" stroke-width=".4"/>
+    <path d="M91 197c27-3 52 3 93 0" stroke-width=".35"/>
+    <path d="M21 220c13-1 24 1 39 0" stroke-width=".3"/>
+  </g>
+</svg>

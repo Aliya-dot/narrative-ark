@@ -2,18 +2,20 @@
 import Link from "next/link";
 import { Pencil, Play, Trash2 } from "lucide-react";
 import type { GameProject, GameSave } from "@/lib/types";
-import { getStoryLengthPreset } from "@/lib/story-length";
+import { storyLengthBadge } from "@/lib/story-length";
 import { ProjectArtwork } from "@/components/home-artwork";
 export function ProjectCard({
   project,
   save,
   onDelete,
+  builtInTrial = false,
 }: {
   project: GameProject;
   save?: GameSave;
   onDelete: (p: GameProject) => void;
+  builtInTrial?: boolean;
 }) {
-  const length = getStoryLengthPreset(project.projectInfo.gameLength);
+  const lengthBadge = storyLengthBadge(project.projectInfo.gameLength);
   const artworkVariant =
     [...project.id].reduce(
       (sum, character) => sum + character.charCodeAt(0),
@@ -24,23 +26,26 @@ export function ProjectCard({
     <article className="home-project-card panel">
       <div className="home-project-card-body">
         <ProjectArtwork variant={artworkVariant} />
-        <button
-          aria-label="删除项目"
-          className="home-project-delete"
-          title="删除项目"
-          onClick={() => onDelete(project)}
-        >
-          <Trash2 size={14} />
-        </button>
+        {!builtInTrial ? (
+          <button
+            aria-label="删除项目"
+            className="home-project-delete"
+            title="删除项目"
+            onClick={() => onDelete(project)}
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : null}
         <h3 className="display">{project.projectInfo.title}</h3>
         <div className="home-project-tags">
+          {builtInTrial ? <span>内置试玩</span> : null}
           <span>{project.projectInfo.genre || "未定题材"}</span>
           <span>
             {project.projectInfo.creationMode === "advanced"
               ? "专业模式"
               : "简单模式"}
           </span>
-          <span>{length.label}篇</span>
+          <span>{lengthBadge}</span>
         </div>
         <p className="home-project-description muted">
           {project.projectInfo.description}

@@ -17,16 +17,20 @@ import {
   generatedWorldBookDraftSchema,
   type GeneratedWorldBookDraft,
 } from "./world-book-ai";
+import { executeAiRequest } from "./model-execution";
+import { getPlatformCapabilities } from "./platform/capabilities";
+
 async function request<T>(payload: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+  const platform = getPlatformCapabilities();
+  const result = await executeAiRequest(payload, {
+    network: platform.network,
+    runtime: platform.runtime,
     signal,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "AI 请求失败");
-  return data.data as T;
+  if (result.status >= 400) {
+    throw new Error(String(result.body.error || "AI 请求失败"));
+  }
+  return result.body.data as T;
 }
 export const testConnection = (config: AIConfig) =>
   request<{

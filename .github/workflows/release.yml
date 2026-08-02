@@ -1,0 +1,275 @@
+name: Release Narrative Ark
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.release_meta.outputs.tag }}
+      version: ${{ steps.release_meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release inputs
+        run: |
+          npm run release:preflight
+          npm run lint
+          npm run typecheck
+          npm run client:typecheck
+          npm test
+
+      - id: release_meta
+        name: Resolve release metadata
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare updater endpoints
+        shell: pwsh
+        env:
+          MIRROR_PUBLIC_BASE_URL: ${{ secrets.MIRROR_PUBLIC_BASE_URL }}
+        run: |
+          $arguments = @(
+            "scripts/prepare-windows-release.mjs",
+            "--github-repository",
+            "${{ github.repository }}"
+          )
+          if ($env:MIRROR_PUBLIC_BASE_URL) {
+            $arguments += @("--mirror-base", $env:MIRROR_PUBLIC_BASE_URL)
+          }
+          node @arguments
+
+      - name: Build and create draft GitHub Release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: "v__VERSION__"
+          releaseName: "叙界 / Narrative Ark v__VERSION__"
+          releaseBody: |
+            叙界 / Narrative Ark 早期测试版。
+
+            - Windows x64：NSIS 安装程序与 MSI 安装包
+            - Android：可直接安装的签名 APK 与应用商店用 AAB
+            - 系统要求：Windows 10+ / Android 9+
+            - Windows 包尚无 Authenticode 代码签名，可能触发 SmartScreen
+            - 用户项目与存档位于安装目录之外，升级不会覆盖
+
+            [完整更新日志](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) ·
+            [下载页](https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/) ·
+            [支持项目](https://ifdian.net/a/xingzhihuan)
+          releaseDraft: true
+          prerelease: true
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          args: >-
+            --target x86_64-pc-windows-msvc
+            --bundles nsis,msi
+            --config src-tauri/tauri.release.conf.json
+
+      - name: Verify installers and updater signatures
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          node scripts/verify-release-artifacts.mjs `
+            --root src-tauri/target/x86_64-pc-windows-msvc/release/bundle `
+            --output release-artifacts/windows-x64-manifest.json
+
+      - name: Test install, upgrade, uninstall and save retention
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem `
+            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis `
+            -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer not found" }
+          ./scripts/windows-release-smoke.ps1 -CurrentInstaller $installer.FullName
+
+      - name: Upload verification manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release upload "${{ steps.release_meta.outputs.tag }}"
+          release-artifacts/windows-x64-manifest.json
+          --clobber
+
+  build-android:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
+          echo "NDK_HOME=${ANDROID_HOME}/ndk/29.0.14206865" >> "${GITHUB_ENV}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare Android signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: narrative-ark-release
+        run: npm run android:signing:prepare
+
+      - name: Validate Android release inputs
+        run: |
+          npm run release:preflight:android
+          npm run lint
+          npm run typecheck
+          npm run client:typecheck
+          npm test
+
+      - name: Build signed APK and AAB
+        run: npm run release:build:android
+
+      - name: Verify Android signatures and metadata
+        run: npm run release:verify:android
+
+      - name: Stage Android release assets
+        run: |
+          mkdir -p release-artifacts/android
+          apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*release.apk' | head -n 1)"
+          aab="$(find src-tauri/gen/android/app/build/outputs/bundle -type f -name '*release.aab' | head -n 1)"
+          test -n "${apk}" && test -n "${aab}"
+          cp "${apk}" "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_android-universal.apk"
+          cp "${aab}" "release-artifacts/android/Narrative-Ark_${{ needs.build-windows.outputs.version }}_android.aab"
+
+      - name: Upload Android assets to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.build-windows.outputs.tag }}" \
+            release-artifacts/android/* \
+            release-artifacts/android-release-manifest.json \
+            --clobber
+
+  publish-release:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish tested prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release edit "${{ needs.build-windows.outputs.tag }}"
+          --repo "${{ github.repository }}"
+          --draft=false
+          --prerelease
+
+  publish-mirror:
+    needs: [build-windows, publish-release]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MIRROR_ENDPOINT: ${{ secrets.MIRROR_ENDPOINT }}
+      MIRROR_BUCKET: ${{ secrets.MIRROR_BUCKET }}
+      MIRROR_ACCESS_KEY_ID: ${{ secrets.MIRROR_ACCESS_KEY_ID }}
+      MIRROR_SECRET_ACCESS_KEY: ${{ secrets.MIRROR_SECRET_ACCESS_KEY }}
+      MIRROR_PUBLIC_BASE_URL: ${{ secrets.MIRROR_PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download tested release assets
+        run: |
+          mkdir -p mirror-payload
+          gh release download "${{ needs.build-windows.outputs.tag }}" \
+            --dir mirror-payload
+
+      - name: Generate mirror updater manifest
+        if: ${{ env.MIRROR_PUBLIC_BASE_URL != '' }}
+        run: |
+          node scripts/rewrite-updater-manifest.mjs \
+            --input mirror-payload/latest.json \
+            --output mirror-payload/latest.mirror.json \
+            --base-url "${MIRROR_PUBLIC_BASE_URL}/narrative-ark/releases/${{ needs.build-windows.outputs.tag }}"
+
+      - name: Preserve mirror payload as workflow artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: narrative-ark-windows-mirror-${{ needs.build-windows.outputs.version }}
+          path: mirror-payload/
+
+      - name: Upload to S3-compatible domestic mirror
+        if: >-
+          ${{ env.MIRROR_ENDPOINT != '' &&
+              env.MIRROR_BUCKET != '' &&
+              env.MIRROR_ACCESS_KEY_ID != '' &&
+              env.MIRROR_SECRET_ACCESS_KEY != '' &&
+              env.MIRROR_PUBLIC_BASE_URL != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.MIRROR_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.MIRROR_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          rm mirror-payload/latest.json
+          mv mirror-payload/latest.mirror.json mirror-payload/latest.json
+          aws s3 sync mirror-payload \
+            "s3://${MIRROR_BUCKET}/narrative-ark/releases/${{ needs.build-windows.outputs.tag }}/" \
+            --endpoint-url "${MIRROR_ENDPOINT}"
+          aws s3 cp mirror-payload/latest.json \
+            "s3://${MIRROR_BUCKET}/narrative-ark/latest.json" \
+            --endpoint-url "${MIRROR_ENDPOINT}" \
+            --cache-control "no-cache"

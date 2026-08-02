@@ -10,6 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import { db } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type { AIConfig, GameProject, GameSave } from "@/lib/types";
 import { ProjectCard } from "@/components/project-card";
 import { ConfirmDialog, EmptyState, LoadingState } from "@/components/common";
@@ -20,10 +21,15 @@ import {
 } from "@/lib/project-import-workflow";
 import { loadProjectList } from "@/lib/project-list-loader";
 import { resolveSaveForProject } from "@/lib/project-save-boundary";
+import { deleteProjectCascade } from "@/lib/project-deletion";
 import {
   HeroBotanicalArtwork,
   JourneyArtwork,
 } from "@/components/home-artwork";
+import {
+  BUILTIN_TRIAL_PROJECT_ID,
+  ensureBuiltInTrialProject,
+} from "@/lib/builtin-trial-project";
 export default function Home() {
   const [projects, setProjects] = useState<GameProject[] | null>(null);
   const [config, setConfig] = useState<AIConfig>();
@@ -44,7 +50,7 @@ export default function Home() {
         `有 ${result.failures.length} 个项目数据不兼容，已跳过显示。`,
       );
     }
-    setConfig(await db.configs.get("active"));
+    setConfig(await loadAIConfig());
     const rawSaves = await db.saves.orderBy("updatedAt").reverse().toArray();
     const projectById = new Map(ps.map((project) => [project.id, project]));
     const saves = rawSaves.flatMap((save) => {
@@ -70,7 +76,17 @@ export default function Home() {
     );
   }
   useEffect(() => {
-    load();
+    void (async () => {
+      try {
+        await ensureBuiltInTrialProject({
+          readProject: (projectId) => db.projects.get(projectId),
+          writeProject: (project) => db.projects.put(project),
+        });
+      } catch {
+        toast.error("内置试玩故事载入失败，正在继续加载本机项目。");
+      }
+      await load();
+    })();
   }, []);
   async function importJson(file?: File) {
     if (!file) return;
@@ -140,12 +156,12 @@ export default function Home() {
               onClick={() => input.current?.click()}
             >
               <Upload size={16} />
-              导入 JSON
+              导入项目 / 游戏包
             </button>
             <input
               ref={input}
               type="file"
-              accept="application/json"
+              accept=".nark,.json,application/json"
               hidden
               onChange={(e) => importJson(e.target.files?.[0])}
             />
@@ -214,9 +230,10 @@ export default function Home() {
               <small className="muted">
                 {config ? "API 已就绪" : "尚未配置 API"}
               </small>
-              <h2 className="display">密钥保存在浏览器</h2>
+              <h2 className="display">密钥保存在系统安全存储</h2>
               <p className="muted">
-                调用模型时临时发送至本站代理；应用代码不会主动记录或持久化密钥。
+                客户端通过原生网络层直连模型；应用数据库和迁移包都不会写入 API
+                Key。
               </p>
               {!config ? (
                 <Link href="/settings" className="home-feature-link gold">
@@ -246,6 +263,7 @@ export default function Home() {
                 project={p}
                 save={latestByProject[p.id]}
                 onDelete={setDel}
+                builtInTrial={p.id === BUILTIN_TRIAL_PROJECT_ID}
               />
             ))}
           </div>
@@ -263,10 +281,19 @@ export default function Home() {
         onCancel={() => setDel(undefined)}
         onConfirm={async () => {
           if (!del) return;
-          await db.transaction("rw", db.projects, db.saves, async () => {
-            await db.projects.delete(del.id);
-            await db.saves.where("projectId").equals(del.id).delete();
-          });
+          await db.transaction("rw", db.projects, db.saves, db.exports, () =>
+            deleteProjectCascade(del.id, {
+              deleteProject: async (projectId) => {
+                await db.projects.delete(projectId);
+              },
+              deleteProjectSaves: async (projectId) => {
+                await db.saves.where("projectId").equals(projectId).delete();
+              },
+              deleteProjectExports: async (projectId) => {
+                await db.exports.where("projectId").equals(projectId).delete();
+              },
+            }),
+          );
           setDel(undefined);
           await load();
           toast.success("项目已删除");

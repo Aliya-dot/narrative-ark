@@ -1,0 +1,79 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "叙界 Narrative Ark",
+  "version": "0.1.5",
+  "identifier": "com.narrativeark.client",
+  "build": {
+    "beforeDevCommand": "npm run client:dev",
+    "beforeBuildCommand": "npm run client:build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist-client"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "叙界 · Narrative Ark",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
+    "category": "Game",
+    "publisher": "Narrative Ark Contributors",
+    "copyright": "Copyright © 2026 Narrative Ark Contributors",
+    "shortDescription": "AI 文字冒险创作与游玩工具",
+    "longDescription": "创建世界、角色与故事，并在持续记忆的文字冒险中游玩。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "minimumWebview2Version": "110.0.1531.0",
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "compression": "lzma",
+        "installerIcon": "icons/icon.ico"
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    },
+    "android": {
+      "minSdkVersion": 28,
+      "versionCode": 1007
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYxRTUwOUUwQTAyQURGRkMKUldUODN5cWc0QW5sWVNtMExTL2tqM293c2hnRFRJRTFMZmdwSFZabjhlMTdBYWkrVkVETXRzTHkK",
+      "endpoints": [
+        "https://github.com/TARGET_OWNER/TARGET_REPOSITORY/releases/latest/download/latest.json",
+        "https://mirror.TARGET_HOST.invalid/narrative-ark/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

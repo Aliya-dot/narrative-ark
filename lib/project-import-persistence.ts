@@ -35,7 +35,7 @@ export type ProjectImportPersistenceResult =
       code: "storage_failure";
     };
 
-const dexieProjectImportPersistence: ProjectImportPersistence = {
+const localProjectImportPersistence: ProjectImportPersistence = {
   async getProject(id) {
     return db.projects.get(id);
   },
@@ -74,7 +74,7 @@ class ImportStorageConflictError extends Error {
 
 export async function persistPreparedProjectImport(
   prepared: PreparedImport,
-  persistence: ProjectImportPersistence = dexieProjectImportPersistence,
+  persistence: ProjectImportPersistence = localProjectImportPersistence,
 ): Promise<ProjectImportPersistenceResult> {
   if (prepared.conflicts.length > 0) {
     return {

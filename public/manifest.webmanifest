@@ -1,0 +1,31 @@
+{
+  "name": "叙界 / Narrative Ark",
+  "short_name": "叙界",
+  "description": "生成、编辑并游玩可持续记忆的 AI 文字冒险",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#faf9ee",
+  "theme_color": "#faf9ee",
+  "icons": [
+    {
+      "src": "/icons/narrative-ark-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/narrative-ark-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/narrative-ark-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

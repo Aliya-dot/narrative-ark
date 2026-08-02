@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Download,
   Ellipsis,
+  Expand,
   Eye,
   EyeOff,
   Ghost,
@@ -24,7 +25,10 @@ import {
   Heart,
   Infinity,
   Landmark,
+  LibraryBig,
+  ListTodo,
   MapPinned,
+  Minimize2,
   Orbit,
   PackageOpen,
   Radiation,
@@ -34,17 +38,19 @@ import {
   Search,
   ScrollText,
   Sparkles,
+  UserRound,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { db, uid } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type {
   AIConfig,
   GameProject,
   GameSave,
   WorldBookTurnContext,
 } from "@/lib/types";
-import { applyPatch, createSave, snapshot } from "@/lib/project";
+import { createSave } from "@/lib/project";
 import { playTurn } from "@/lib/ai-client";
 import {
   exportAiPlayPackage,
@@ -54,11 +60,7 @@ import {
 import { SaveManager } from "@/components/save-manager";
 import { ConfirmDialog, ErrorState, LoadingState } from "@/components/common";
 import { toast } from "sonner";
-import {
-  compactSummary,
-  readableParagraphs,
-  summaryParagraphs,
-} from "@/lib/text";
+import { readableParagraphs, summaryParagraphs } from "@/lib/text";
 import { displayLocationName } from "@/lib/location-label";
 import { ensureSettingsVersions } from "@/lib/settings-version";
 import { chapterForTurn, storyPacing } from "@/lib/story-length";
@@ -79,9 +81,36 @@ import {
   loadProjectForPlay,
 } from "@/lib/play-project-loader";
 import { displayAttributeName } from "@/lib/attribute-label";
+import { readPlayLayout, writePlayLayout } from "@/lib/play-layout-persistence";
+import {
+  completePlayTurn,
+  latestPlayerAction,
+  preparePlayTurn,
+  restorePreviousTurn,
+} from "@/lib/play-turn-state";
+import {
+  resolveAndroidBackAction,
+  resolvePlayShortcut,
+} from "@/lib/platform/play-interaction";
+import {
+  isAppFullscreen,
+  setAppFullscreen,
+  toggleAppFullscreen,
+} from "@/lib/platform/window-controls";
+import { getPlatformCapabilities } from "@/lib/platform/capabilities";
 
 function storyScrollStorageKey(projectId: string, saveId: string) {
   return `narrative-ark:story-scroll:v2:${projectId}:${saveId}`;
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT")
+  );
 }
 
 export default function Play() {
@@ -99,6 +128,7 @@ export default function Play() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [choicesOpen, setChoicesOpen] = useState(true);
   const [immersive, setImmersive] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [worldTab, setWorldTab] = useState<
     "memory" | "people" | "tasks" | "book"
   >("memory");
@@ -109,6 +139,9 @@ export default function Play() {
   const [rightOpen, setRightOpen] = useState(true);
   const [shellActions, setShellActions] = useState<HTMLElement | null>(null);
   const storyScroll = useRef<HTMLDivElement>(null);
+  const actionInput = useRef<HTMLTextAreaElement>(null);
+  const shortcutHandler = useRef<(event: KeyboardEvent) => void>(() => {});
+  const androidBackHandler = useRef<(canGoBack: boolean) => void>(() => {});
   const pendingScrollMessageId = useRef<string | null>(null);
   const scrollSaveFrame = useRef<number | null>(null);
   const lastStoryScrollTop = useRef(0);
@@ -119,22 +152,52 @@ export default function Play() {
     setShellActions(document.getElementById("app-shell-actions"));
   }, []);
   useEffect(() => {
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem(`narrative-ark:play-layout:${id}`) || "{}",
-      ) as {
-        leftOpen?: boolean;
-        rightOpen?: boolean;
-        immersive?: boolean;
-      };
-      setLeftOpen(saved.leftOpen ?? true);
-      setRightOpen(saved.rightOpen ?? true);
-      setImmersive(saved.immersive ?? false);
-    } catch {
-      setLeftOpen(true);
-      setRightOpen(true);
-      setImmersive(false);
-    }
+    document.body.classList.add("play-mode");
+    return () => document.body.classList.remove("play-mode");
+  }, []);
+  useEffect(() => {
+    void isAppFullscreen().then(setFullscreen);
+    const syncFullscreen = () =>
+      void isAppFullscreen()
+        .then(setFullscreen)
+        .catch(() => {});
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () =>
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const syncViewport = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty(
+        "--play-viewport-height",
+        `${Math.round(height)}px`,
+      );
+      document.body.classList.toggle(
+        "play-keyboard-open",
+        Boolean(viewport && window.innerHeight - viewport.height > 140),
+      );
+    };
+    syncViewport();
+    viewport?.addEventListener("resize", syncViewport);
+    viewport?.addEventListener("scroll", syncViewport);
+    window.addEventListener("resize", syncViewport);
+    return () => {
+      viewport?.removeEventListener("resize", syncViewport);
+      viewport?.removeEventListener("scroll", syncViewport);
+      window.removeEventListener("resize", syncViewport);
+      document.documentElement.style.removeProperty("--play-viewport-height");
+      document.body.classList.remove("play-keyboard-open");
+    };
+  }, []);
+  useEffect(() => {
+    const saved = readPlayLayout(
+      localStorage,
+      `narrative-ark:play-layout:${id}`,
+    );
+    setLeftOpen(saved.leftOpen);
+    setRightOpen(saved.rightOpen);
+    setImmersive(saved.immersive);
   }, [id]);
   useEffect(() => {
     if (!s?.id) return;
@@ -180,7 +243,7 @@ export default function Play() {
           routeProjectId: id,
           readProject: (projectId) => db.projects.get(projectId),
         });
-        setConfig(await db.configs.get("active"));
+        setConfig(await loadAIConfig());
         if (!loadedProject.ok) {
           setP(null);
           setS(null);
@@ -320,14 +383,11 @@ export default function Play() {
     nextRight: boolean,
     nextImmersive: boolean,
   ) {
-    localStorage.setItem(
-      `narrative-ark:play-layout:${id}`,
-      JSON.stringify({
-        leftOpen: nextLeft,
-        rightOpen: nextRight,
-        immersive: nextImmersive,
-      }),
-    );
+    writePlayLayout(localStorage, `narrative-ark:play-layout:${id}`, {
+      leftOpen: nextLeft,
+      rightOpen: nextRight,
+      immersive: nextImmersive,
+    });
   }
   function updateSidebars(nextLeft: boolean, nextRight: boolean) {
     setLeftOpen(nextLeft);
@@ -339,6 +399,20 @@ export default function Play() {
     setImmersive(next);
     setTab("story");
     saveLayout(leftOpen, rightOpen, next);
+  }
+  async function toggleFullscreenNow() {
+    try {
+      setFullscreen(await toggleAppFullscreen());
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "全屏切换失败");
+    }
+  }
+  function showPlaySection(next: "status" | "story" | "world") {
+    if (immersive && next !== "story") {
+      setImmersive(false);
+      saveLayout(leftOpen, rightOpen, false);
+    }
+    setTab(next);
   }
   async function persist(next: GameSave) {
     if (!p || p.id !== id) {
@@ -376,18 +450,14 @@ export default function Play() {
     const activeTurnDuration = regenerate
       ? null
       : consumeActiveTurnDuration(new Date().getTime());
-    const base = structuredClone(activeSave);
-    const next = structuredClone(activeSave);
-    next.history = [...next.history.slice(-19), snapshot(base)];
     const playerMessageId = uid("msg");
+    const pending = preparePlayTurn(
+      activeSave,
+      action,
+      playerMessageId,
+      new Date().toISOString(),
+    );
     pendingScrollMessageId.current = playerMessageId;
-    next.recentMessages.push({
-      id: playerMessageId,
-      role: "player",
-      content: action.trim(),
-      createdAt: new Date().toISOString(),
-      turn: next.turn + 1,
-    });
     setInput("");
     try {
       const storedLatestProject = await db.projects.get(p.id);
@@ -411,7 +481,7 @@ export default function Play() {
           worldBookContext = retrieveWorldBookContext(
             worldBook,
             worldBookVersion,
-            buildWorldBookRetrievalContext(latestProject, next, action),
+            buildWorldBookRetrievalContext(latestProject, pending.next, action),
             latestProject.worldBinding.contextBudget,
           );
         }
@@ -419,53 +489,21 @@ export default function Play() {
       const result = await playTurn(
         config,
         latestProject,
-        next,
+        pending.next,
         action,
         regenerate,
         worldBookContext,
       );
-      if (worldBookContext)
-        next.lastWorldBookContext = worldBookContext.preview;
-      next.turn += 1;
-      next.recentMessages.push({
-        id: uid("msg"),
-        role: "narrator",
-        content: result.narrative,
+      const next = completePlayTurn({
+        pendingSave: pending.next,
+        action: pending.action,
+        response: result,
+        narratorMessageId: uid("msg"),
         createdAt: new Date().toISOString(),
-        turn: next.turn,
-        meta: {
-          choices: result.choices,
-          dialogue: result.dialogue,
-          events: result.newEvents,
-          settingsVersionId: latestProject.currentSettingsVersionId,
-          settingsVersionNumber: latestProject.settingsVersionNumber,
-        },
-      });
-      next.settingsVersionId = latestProject.currentSettingsVersionId;
-      next.settingsVersionNumber = latestProject.settingsVersionNumber;
-      if (
-        activeTurnDuration !== null &&
-        activeTurnDuration >= 10_000 &&
-        activeTurnDuration <= 600_000
-      ) {
-        next.turnDurationsMs = [
-          ...(next.turnDurationsMs || []),
-          activeTurnDuration,
-        ].slice(-20);
-      }
-      applyPatch(next, result.statePatch);
-      next.importantMemories = [
-        ...new Set([...next.importantMemories, ...result.importantMemories]),
-      ].slice(-60);
-      next.rollingSummary = compactSummary(
-        result.rollingSummary ||
-          [next.rollingSummary, result.shortSummary].filter(Boolean).join(" "),
-        180,
-      );
-      next.importantChoices.push({
-        turn: next.turn,
-        action,
-        consequence: compactSummary(result.shortSummary, 100),
+        settingsVersionId: latestProject.currentSettingsVersionId,
+        settingsVersionNumber: latestProject.settingsVersionNumber,
+        activeTurnDurationMs: activeTurnDuration,
+        worldBookContext: worldBookContext?.preview,
       });
       setChoicesOpen(true);
       await persist(next);
@@ -473,7 +511,7 @@ export default function Play() {
     } catch (e) {
       pendingScrollMessageId.current = null;
       setChoicesOpen(true);
-      setS(base);
+      setS(pending.base);
       setInput(action);
       toast.error(e instanceof Error ? e.message : "回合生成失败");
     } finally {
@@ -484,23 +522,111 @@ export default function Play() {
     }
   }
   async function undoNow() {
-    if (!s || !s.history.length) return;
-    const prev = s.history[s.history.length - 1];
-    const restored = { ...prev, history: s.history.slice(0, -1) };
+    if (!s) return;
+    const restored = restorePreviousTurn(s);
+    if (!restored) return;
     await persist(restored);
     toast.success("已回退上一回合");
   }
   async function regenerateNow() {
-    if (!s || s.history.length === 0) return;
-    const lastAction = [...s.recentMessages]
-      .reverse()
-      .find((m) => m.role === "player")?.content;
+    if (!s) return;
+    const lastAction = latestPlayerAction(s);
     if (!lastAction) return;
-    const prev = s.history[s.history.length - 1];
-    const restored = { ...prev, history: s.history.slice(0, -1) };
+    const restored = restorePreviousTurn(s);
+    if (!restored) return;
     await persist(restored);
     await send(lastAction, true, restored);
   }
+  useEffect(() => {
+    shortcutHandler.current = (event) => {
+      const action = resolvePlayShortcut({
+        key: event.key,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        editable: isEditableTarget(event.target),
+      });
+      if (!action) return;
+      event.preventDefault();
+      if (typeof action === "object") {
+        const latest = [...(s?.recentMessages ?? [])]
+          .reverse()
+          .find((message) => message.role === "narrator");
+        const option = (
+          (latest?.meta?.choices || []) as { id: string; text: string }[]
+        )[action.choiceIndex];
+        if (option && !sending) void send(option.text);
+        return;
+      }
+      if (action === "fullscreen") void toggleFullscreenNow();
+      if (action === "save") setSaveOpen(true);
+      if (action === "immersive") toggleImmersive();
+      if (action === "status") showPlaySection("status");
+      if (action === "story") showPlaySection("story");
+      if (action === "world") showPlaySection("world");
+      if (action === "escape") {
+        if (saveOpen) setSaveOpen(false);
+        else if (moreOpen) setMoreOpen(false);
+        else if (clear) setClear(false);
+        else if (confirmAction) setConfirmAction(null);
+        else if (tab !== "story") setTab("story");
+        else if (fullscreen) {
+          void setAppFullscreen(false).then(setFullscreen);
+        }
+      }
+    };
+  });
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => shortcutHandler.current(event);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, []);
+  useEffect(() => {
+    androidBackHandler.current = (canGoBack) => {
+      const active = document.activeElement;
+      const action = resolveAndroidBackAction({
+        modalOpen: saveOpen,
+        menuOpen: moreOpen,
+        confirmationOpen: clear || confirmAction !== null,
+        section: tab,
+        editing: isEditableTarget(active),
+        canGoBack,
+      });
+      if (action === "close-modal") setSaveOpen(false);
+      if (action === "close-menu") setMoreOpen(false);
+      if (action === "close-confirmation") {
+        setClear(false);
+        setConfirmAction(null);
+      }
+      if (action === "show-story") setTab("story");
+      if (action === "dismiss-keyboard" && active instanceof HTMLElement) {
+        active.blur();
+      }
+      if (action === "history-back") history.back();
+      if (action === "home") location.hash = "#/";
+    };
+  });
+  useEffect(() => {
+    const runtime = getPlatformCapabilities().runtime;
+    if (!runtime.native || runtime.platform !== "android") return;
+    let active = true;
+    let listener: { unregister(): Promise<void> } | undefined;
+    void import("@tauri-apps/api/app")
+      .then(({ onBackButtonPress }) =>
+        onBackButtonPress(({ canGoBack }) => {
+          if (active) androidBackHandler.current(canGoBack);
+        }),
+      )
+      .then((value) => {
+        if (active) listener = value;
+        else void value.unregister();
+      });
+    return () => {
+      active = false;
+      if (listener) void listener.unregister();
+    };
+  }, []);
   if (p === undefined || s === undefined)
     return (
       <section className="container py-12">
@@ -548,7 +674,7 @@ export default function Play() {
     { title: "当前任务", items: s.activeQuests.map((item) => item.title) },
   ].filter((section) => section.items.length > 0);
   const worldTabs = [
-    ["memory", "记忆"],
+    ["memory", "本回合"],
     ["people", "人物"],
     ["tasks", "任务"],
     ...(p.worldBinding ? ([["book", "世界书"]] as const) : []),
@@ -557,11 +683,11 @@ export default function Play() {
   const showRight = rightOpen && !immersive;
   const playGridColumns =
     showLeft && showRight
-      ? "xl:grid-cols-[210px_minmax(680px,1fr)_284px]"
+      ? "xl:grid-cols-[250px_minmax(720px,1fr)_320px]"
       : showLeft
-        ? "xl:grid-cols-[210px_minmax(680px,1fr)]"
+        ? "xl:grid-cols-[250px_minmax(720px,1fr)]"
         : showRight
-          ? "xl:grid-cols-[minmax(680px,1fr)_284px]"
+          ? "xl:grid-cols-[minmax(720px,1fr)_320px]"
           : "xl:grid-cols-[minmax(0,1fr)]";
   const leftPanelVisibility =
     tab === "status"
@@ -580,7 +706,7 @@ export default function Play() {
         ? "hidden xl:flex"
         : "hidden";
   return (
-    <section className="play-container flex h-[calc(100dvh-65px)] min-h-0 flex-col py-3 md:py-4">
+    <section className="play-container play-gamebook flex h-[calc(100dvh-65px)] min-h-0 flex-col py-2 md:py-3">
       {shellActions &&
         createPortal(
           <>
@@ -602,6 +728,18 @@ export default function Play() {
               {immersive ? <EyeOff size={15} /> : <Eye size={15} />}
               <span className="desktop-only">
                 {immersive ? "恢复布局" : "沉浸阅读"}
+              </span>
+            </button>
+            <button
+              className="desktop-fullscreen-control btn border-transparent bg-transparent"
+              onClick={toggleFullscreenNow}
+              title="切换全屏（F11）"
+              aria-label={fullscreen ? "退出全屏" : "进入全屏"}
+              aria-pressed={fullscreen}
+            >
+              {fullscreen ? <Minimize2 size={15} /> : <Expand size={15} />}
+              <span className="desktop-only">
+                {fullscreen ? "退出全屏" : "全屏"}
               </span>
             </button>
             <button
@@ -636,7 +774,7 @@ export default function Play() {
           </>,
           shellActions,
         )}
-      <div className="mb-3 flex min-h-10 shrink-0 items-center justify-between gap-3">
+      <div className="gamebook-heading mb-2 flex min-h-10 shrink-0 items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="display truncate text-xl md:text-2xl">
             {p.projectInfo.title}
@@ -678,37 +816,22 @@ export default function Play() {
         </div>
       </div>
       <div
-        className={`${immersive ? "hidden" : "mb-3 grid shrink-0 grid-cols-3 gap-1 xl:hidden"}`}
-      >
-        <button
-          className={`btn ${tab === "status" ? "btn-primary" : ""}`}
-          onClick={() => setTab("status")}
-        >
-          状态
-        </button>
-        <button
-          className={`btn ${tab === "story" ? "btn-primary" : ""}`}
-          onClick={() => setTab("story")}
-        >
-          剧情
-        </button>
-        <button
-          className={`btn ${tab === "world" ? "btn-primary" : ""}`}
-          onClick={() => setTab("world")}
-        >
-          世界
-        </button>
-      </div>
-      <div
-        className={`grid min-h-0 flex-1 gap-3 ${playGridColumns}`}
+        className={`gamebook-grid grid min-h-0 flex-1 gap-2 ${playGridColumns}`}
         data-testid="play-grid"
       >
+        {!immersive && tab !== "story" && (
+          <button
+            className="mobile-drawer-scrim xl:hidden"
+            aria-label="关闭信息抽屉"
+            onClick={() => setTab("story")}
+          />
+        )}
         <aside
-          className={`panel scrollbar relative min-h-0 overflow-y-auto p-4 ${leftPanelVisibility}`}
+          className={`panel gamebook-player-rail scrollbar relative min-h-0 overflow-y-auto p-4 ${leftPanelVisibility}`}
           data-testid="player-panel"
         >
           <button
-            className="btn icon-btn absolute top-2 right-2 hidden border-transparent bg-transparent xl:inline-flex"
+            className="desktop-panel-toggle btn icon-btn absolute top-2 right-2 border-transparent bg-transparent"
             onClick={() => updateSidebars(false, rightOpen)}
             title="收起玩家状态栏"
             aria-label="收起左侧玩家状态栏"
@@ -716,12 +839,24 @@ export default function Play() {
           >
             <ChevronLeft size={18} />
           </button>
-          <p className="mono gold text-[11px]">PLAYER STATE</p>
-          <h2 className="display mt-2 pr-8 text-xl">
+          <button
+            className="mobile-drawer-close btn icon-btn absolute top-2 right-2 border-transparent bg-transparent"
+            onClick={() => setTab("story")}
+            aria-label="关闭角色抽屉"
+          >
+            <X size={18} />
+          </button>
+          <p className="gamebook-rail-title">角色档案</p>
+          <div className="gamebook-player-seal" aria-hidden="true">
+            {(p.player.name || "旅").slice(0, 1)}
+          </div>
+          <h2 className="display gamebook-player-name mt-2 pr-8 text-xl">
             {p.player.name || "无名旅者"}
           </h2>
-          <p className="muted mt-1 text-sm">{p.player.identity}</p>
-          <dl className="mt-4 space-y-3 border-y hairline py-3">
+          <p className="muted gamebook-player-identity mt-1 text-sm">
+            {p.player.identity}
+          </p>
+          <dl className="gamebook-context mt-4 space-y-3 border-y hairline py-3">
             <PlayerContextStat
               label="当前位置"
               value={currentLocation}
@@ -730,7 +865,7 @@ export default function Play() {
             <PlayerContextStat label="当前时间" value={s.currentTime} />
           </dl>
           {!!Object.keys(s.playerState.attributes).length && (
-            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+            <dl className="gamebook-attributes mt-3 grid gap-2">
               {Object.entries(s.playerState.attributes).map(([k, v]) => (
                 <CompactStat
                   key={k}
@@ -757,20 +892,32 @@ export default function Play() {
           )}
         </aside>
         <main
-          className={`panel relative flex min-w-0 flex-col overflow-hidden ${tab !== "story" ? "hidden xl:flex" : ""}`}
+          className="panel gamebook-story-page relative flex min-w-0 flex-col overflow-hidden"
           data-testid="story-panel"
         >
           <div
             ref={storyScroll}
-            className="story-scrollbar min-h-[60%] flex-1 overflow-y-auto p-5 md:px-8 md:py-6"
+            className="story-scrollbar gamebook-story-scroll min-h-[60%] flex-1 overflow-y-auto p-5 md:px-8 md:py-6"
             data-testid="story-scroll"
             onScroll={rememberScrollPosition}
           >
+            <header className="gamebook-chapter-masthead">
+              <div className="gamebook-safehouse-lineart" aria-hidden="true" />
+              <p className="gamebook-chapter-overline">
+                第 {s.turn} 回合 · {currentChapter.title}
+              </p>
+              <h2 className="display">{s.currentTime}</h2>
+              <div className="gamebook-chapter-location">
+                <span />
+                <b title={locationIdTitle}>{currentLocation}</b>
+                <span />
+              </div>
+            </header>
             {s.recentMessages.map((m) => (
               <article
                 key={m.id}
                 data-message-id={m.id}
-                className={`mb-7 ${m.role === "player" ? "ml-auto max-w-[78%] border-l-2 border-[#b89b62] pl-4" : "mx-auto max-w-[900px]"}`}
+                className={`gamebook-message mb-7 ${m.role === "player" ? "gamebook-player-action ml-auto max-w-[78%] pl-4" : "mx-auto max-w-[780px]"}`}
               >
                 <small className="mono muted">
                   {m.role === "player"
@@ -797,8 +944,11 @@ export default function Play() {
                       content: string;
                     }[]
                   ).map((d, i) => (
-                    <blockquote className="mt-3 border-l hairline pl-4" key={i}>
-                      <b className="gold text-sm">{d.characterName}</b>
+                    <blockquote
+                      className="gamebook-dialogue mt-3 border-l pl-4"
+                      key={i}
+                    >
+                      <b className="text-sm">{d.characterName}</b>
                       <p className="mt-1">“{d.content}”</p>
                     </blockquote>
                   ))}
@@ -812,7 +962,7 @@ export default function Play() {
             )}
           </div>
           <div
-            className="choice-dock flex max-h-[40%] min-h-0 shrink-0 flex-col border-t hairline bg-[var(--panel2)] p-3 md:p-4"
+            className="choice-dock gamebook-action-dock flex max-h-[42%] min-h-0 shrink-0 flex-col border-t hairline p-3 md:p-4"
             data-world-theme={worldTheme.key}
             data-testid="choice-dock"
           >
@@ -842,12 +992,12 @@ export default function Play() {
             </div>
             {!!choices.length && (
               <div
-                className={`story-scrollbar mb-3 min-h-0 overflow-y-auto ${choicesOpen ? "block" : "hidden"}`}
+                className={`gamebook-choices-scroll story-scrollbar mb-3 min-h-0 overflow-y-auto ${choicesOpen ? "block" : "hidden"}`}
               >
-                <div className="flex flex-wrap gap-2 pr-1">
-                  {choices.map((c) => (
+                <div className="gamebook-choice-grid pr-1">
+                  {choices.map((c, index) => (
                     <button
-                      className="choice-option btn text-left text-sm"
+                      className="choice-option gamebook-choice text-left text-sm"
                       key={c.id}
                       disabled={sending}
                       onClick={() => send(c.text)}
@@ -858,7 +1008,12 @@ export default function Play() {
                           正在推进…
                         </>
                       ) : (
-                        c.text
+                        <>
+                          <span className="gamebook-choice-index">
+                            {index + 1}
+                          </span>
+                          <span>{c.text}</span>
+                        </>
                       )}
                     </button>
                   ))}
@@ -867,7 +1022,8 @@ export default function Play() {
             )}
             <div className="mt-auto flex shrink-0 gap-2">
               <textarea
-                className="input min-h-[48px] flex-1 resize-none"
+                ref={actionInput}
+                className="input gamebook-action-input min-h-[48px] flex-1 resize-none"
                 value={input}
                 disabled={sending}
                 onChange={(e) => setInput(e.target.value)}
@@ -877,15 +1033,17 @@ export default function Play() {
                     send();
                   }
                 }}
+                enterKeyHint="send"
                 placeholder="描述你的行动…（Enter 发送，Shift + Enter 换行）"
               />
               <button
-                className="btn btn-gold icon-btn h-auto"
+                className="btn btn-gold gamebook-send h-auto"
                 disabled={sending || !input.trim()}
                 onClick={() => send()}
                 aria-label="发送"
               >
                 <ArrowUp size={18} />
+                <span className="hidden md:inline">发送</span>
               </button>
             </div>
             <div className="mt-2 flex shrink-0 flex-wrap gap-x-3 gap-y-1">
@@ -921,12 +1079,12 @@ export default function Play() {
           </div>
         </main>
         <aside
-          className={`panel min-h-0 flex-col overflow-hidden ${rightPanelVisibility}`}
+          className={`panel gamebook-index-rail min-h-0 flex-col overflow-hidden ${rightPanelVisibility}`}
           data-testid="world-panel"
         >
-          <div className="flex shrink-0 items-center gap-1 border-b hairline p-2">
+          <div className="gamebook-index-tabs flex shrink-0 items-center gap-1 border-b hairline p-2">
             <button
-              className="btn icon-btn hidden shrink-0 border-transparent bg-transparent xl:inline-flex"
+              className="desktop-panel-toggle btn icon-btn shrink-0 border-transparent bg-transparent"
               onClick={() => updateSidebars(leftOpen, false)}
               title="收起世界信息栏"
               aria-label="收起右侧世界信息栏"
@@ -934,13 +1092,20 @@ export default function Play() {
             >
               <ChevronRight size={18} />
             </button>
+            <button
+              className="mobile-drawer-close btn icon-btn shrink-0 border-transparent bg-transparent"
+              onClick={() => setTab("story")}
+              aria-label="关闭世界信息抽屉"
+            >
+              <X size={18} />
+            </button>
             <div
               className={`grid min-w-0 flex-1 gap-1 ${worldTabs.length === 4 ? "grid-cols-4" : "grid-cols-3"}`}
             >
               {worldTabs.map(([key, label]) => (
                 <button
                   key={key}
-                  className={`min-w-0 whitespace-nowrap rounded-md px-1 py-2 text-xs transition-colors ${worldTab === key ? "bg-[var(--panel2)] gold" : "muted hover:text-[var(--paper)]"}`}
+                  className={`min-w-0 whitespace-nowrap px-1 py-2 text-xs transition-colors ${worldTab === key ? "active" : "muted hover:text-[var(--paper)]"}`}
                   onClick={() => setWorldTab(key)}
                   aria-pressed={worldTab === key}
                 >
@@ -950,28 +1115,28 @@ export default function Play() {
             </div>
           </div>
           <div
-            className={`${worldTab === "memory" ? "scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
+            className={`${worldTab === "memory" ? "gamebook-context-panel scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
           >
-            <p className="mono gold text-[11px]">WORLD MEMORY</p>
+            <p className="gamebook-rail-title">本回合摘要</p>
             <Block title="重要记忆" items={s.importantMemories} />
             <SummaryBlock text={s.rollingSummary} />
           </div>
           <div
-            className={`${worldTab === "people" ? "scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
+            className={`${worldTab === "people" ? "gamebook-context-panel scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
           >
-            <p className="mono gold text-[11px]">CHARACTERS</p>
+            <p className="gamebook-rail-title">在场人物</p>
             <NpcRelations project={p} save={s} />
           </div>
           <div
-            className={`${worldTab === "tasks" ? "scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
+            className={`${worldTab === "tasks" ? "gamebook-context-panel scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
           >
-            <p className="mono gold text-[11px]">QUEST & EVENTS</p>
+            <p className="gamebook-rail-title">任务与事件</p>
             <TaskPanel save={s} />
           </div>
           <div
-            className={`${worldTab === "book" ? "scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
+            className={`${worldTab === "book" ? "gamebook-context-panel scrollbar min-h-0 flex-1 overflow-y-auto p-4" : "hidden"}`}
           >
-            <p className="mono gold text-[11px]">CONTEXT RETRIEVAL</p>
+            <p className="gamebook-rail-title">世界资料</p>
             {p.worldBinding ? (
               <div className="mt-4 space-y-4 text-sm">
                 <div className="rounded-lg bg-[var(--panel2)] p-3">
@@ -1058,6 +1223,53 @@ export default function Play() {
           </div>
         </aside>
       </div>
+      <nav
+        className={`mobile-play-nav xl:hidden ${immersive ? "hidden" : ""}`}
+        aria-label="游玩信息导航"
+      >
+        <button
+          className={tab === "story" ? "active" : ""}
+          onClick={() => showPlaySection("story")}
+          aria-current={tab === "story" ? "page" : undefined}
+        >
+          <ScrollText size={19} />
+          <span>剧情</span>
+        </button>
+        <button
+          className={tab === "status" ? "active" : ""}
+          onClick={() => showPlaySection("status")}
+          aria-current={tab === "status" ? "page" : undefined}
+        >
+          <UserRound size={19} />
+          <span>角色</span>
+        </button>
+        <button
+          className={tab === "world" && worldTab === "tasks" ? "active" : ""}
+          onClick={() => {
+            setWorldTab("tasks");
+            showPlaySection("world");
+          }}
+          aria-current={
+            tab === "world" && worldTab === "tasks" ? "page" : undefined
+          }
+        >
+          <ListTodo size={19} />
+          <span>任务</span>
+        </button>
+        <button
+          className={tab === "world" && worldTab !== "tasks" ? "active" : ""}
+          onClick={() => {
+            setWorldTab(p.worldBinding ? "book" : "memory");
+            showPlaySection("world");
+          }}
+          aria-current={
+            tab === "world" && worldTab !== "tasks" ? "page" : undefined
+          }
+        >
+          <LibraryBig size={19} />
+          <span>{p.worldBinding ? "世界书" : "世界"}</span>
+        </button>
+      </nav>
       <PlayModal
         open={saveOpen}
         title="存档管理"
@@ -1168,13 +1380,39 @@ function CompactStat({
   value: string;
   sourceLabel?: string;
 }) {
+  const numericValue = Number(value);
+  const supportsProgress = /生命|体力|精神|血源|力量|理智|魔力|耐力/.test(
+    label,
+  );
+  const progress =
+    Number.isFinite(numericValue) && supportsProgress
+      ? Math.max(0, Math.min(100, numericValue))
+      : null;
+  const tone = label.includes("生命")
+    ? "health"
+    : label.includes("精神")
+      ? "spirit"
+      : label.includes("血") || label.includes("力量")
+        ? "blood"
+        : "neutral";
   return (
     <div
-      className="rounded-md bg-[var(--panel2)] px-2.5 py-2"
+      className="gamebook-attribute"
+      data-tone={tone}
       title={sourceLabel && sourceLabel !== label ? sourceLabel : undefined}
     >
-      <dt className="muted truncate text-[10px]">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm font-medium">{value}</dd>
+      <div className="flex items-center justify-between gap-3">
+        <dt className="muted truncate text-[11px]">{label}</dt>
+        <dd className="truncate text-xs font-medium">
+          {value}
+          {progress !== null ? " / 100" : ""}
+        </dd>
+      </div>
+      {progress !== null ? (
+        <span className="gamebook-stat-track" aria-hidden="true">
+          <i style={{ width: `${progress}%` }} />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -1189,7 +1427,10 @@ function CompactBlock({
   initiallyOpen?: boolean;
 }) {
   return (
-    <details className="group mt-3 border-t hairline pt-3" open={initiallyOpen}>
+    <details
+      className="gamebook-fold group mt-3 border-t hairline pt-3"
+      open={initiallyOpen}
+    >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs">
         <span className="font-medium">{title}</span>
         <span className="flex items-center gap-1.5">
@@ -1202,10 +1443,10 @@ function CompactBlock({
           />
         </span>
       </summary>
-      <ul className="mt-2 space-y-1.5">
+      <ul className="gamebook-fold-items mt-2 space-y-1.5">
         {items.map((item, index) => (
           <li
-            className="rounded-md bg-[var(--panel2)] px-2.5 py-2 text-xs leading-5"
+            className="px-2.5 py-2 text-xs leading-5"
             key={`${item}-${index}`}
           >
             {item}
@@ -1218,17 +1459,12 @@ function CompactBlock({
 
 function Block({ title, items }: { title: string; items: string[] }) {
   return (
-    <section className="mt-6">
+    <section className="gamebook-ruled-section mt-6">
       <h3 className="label mb-2">{title}</h3>
       {items.length ? (
-        <ul className="space-y-2">
-          {items.map((x, i) => (
-            <li
-              key={i}
-              className="rounded-md bg-[var(--panel2)] px-3 py-2 text-xs leading-5"
-            >
-              {x}
-            </li>
+        <ul>
+          {items.slice(0, 3).map((x, i) => (
+            <li key={i}>{x}</li>
           ))}
         </ul>
       ) : (
@@ -1401,6 +1637,20 @@ function MoreMenu({
         <Download className="mr-2 inline" size={14} />
         导出游戏记录
       </button>
+      <div className="my-2 hidden border-t hairline xl:block" />
+      <div className="hidden px-2 py-1 xl:block">
+        <p className="label mb-2">快捷键</p>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dt className="mono muted">F11</dt>
+          <dd>全屏</dd>
+          <dt className="mono muted">Ctrl S</dt>
+          <dd>存档</dd>
+          <dt className="mono muted">Alt 1/2/3</dt>
+          <dd>角色 / 剧情 / 世界</dd>
+          <dt className="mono muted">1—9</dt>
+          <dd>选择推荐行动</dd>
+        </dl>
+      </div>
       <div className="my-2 border-t hairline" />
       <p className="label px-2 py-1.5">危险操作</p>
       <button
@@ -1432,31 +1682,38 @@ function NpcRelations({
   save: GameSave;
 }) {
   return (
-    <section className="mt-6">
+    <section className="gamebook-relations mt-6">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="label">NPC 关系</h3>
         <span className="muted text-[10px]">态度参考：-100～100</span>
       </div>
       {project.characters.length ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {project.characters.map((character) => {
             const state = save.characterStates[character.id];
             const attitude = state?.attitude ?? character.attitude;
             const delta = attitude - character.attitude;
             return (
-              <details
-                className="group rounded-md bg-[var(--panel2)] px-3 py-2"
-                key={character.id}
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs">
-                  <span className="min-w-0 truncate font-medium">
-                    {character.name}
+              <details className="gamebook-relation group" key={character.id}>
+                <summary className="flex cursor-pointer list-none items-center gap-3 text-xs">
+                  <span className="gamebook-relation-seal" aria-hidden="true">
+                    {character.name.slice(0, 1)}
                   </span>
-                  <span className="shrink-0">
-                    <b className="gold font-medium">
-                      {relationStage(attitude)}
-                    </b>{" "}
-                    · {attitude}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <b className="truncate">{character.name}</b>
+                      <em>{relationStage(attitude)}</em>
+                    </span>
+                    <span className="muted mt-1 block truncate">
+                      {character.identity}
+                    </span>
+                    <span className="gamebook-trust-track" aria-hidden="true">
+                      <i
+                        style={{
+                          width: `${Math.max(0, Math.min(100, (attitude + 100) / 2))}%`,
+                        }}
+                      />
+                    </span>
                   </span>
                 </summary>
                 <dl className="mt-3 space-y-2 border-t hairline pt-3 text-xs leading-5">
@@ -1496,11 +1753,11 @@ function NpcRelations({
 function SummaryBlock({ text }: { text: string }) {
   const paragraphs = summaryParagraphs(text);
   return (
-    <section className="mt-6">
+    <section className="gamebook-summary mt-6">
       <h3 className="label mb-2">剧情摘要</h3>
       {paragraphs.length ? (
-        <div className="space-y-2 rounded-md bg-[var(--panel2)] px-3 py-3">
-          {paragraphs.map((paragraph, index) => (
+        <div className="space-y-2">
+          {paragraphs.slice(0, 2).map((paragraph, index) => (
             <p className="text-xs leading-6" key={index}>
               {paragraph}
             </p>
@@ -1516,7 +1773,7 @@ function SummaryBlock({ text }: { text: string }) {
 function NarrativeText({ content }: { content: string }) {
   const paragraphs = readableParagraphs(content);
   return (
-    <div className="display mt-3 space-y-4 text-[17px] leading-8 tracking-[0.035em]">
+    <div className="display gamebook-narrative mt-3 space-y-5 text-[18px] leading-9 tracking-[0.025em]">
       {paragraphs.map((paragraph, index) => (
         <p key={index} style={{ textIndent: "2em" }}>
           {paragraph}

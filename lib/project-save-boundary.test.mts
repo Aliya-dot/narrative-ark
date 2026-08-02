@@ -830,7 +830,9 @@ assert.doesNotMatch(
   /setS\(next\)/,
 );
 assert.match(turnSource, /await persist\(next\)/);
-assert.match(turnSource, /catch \(e\)[\s\S]*?setS\(base\)/);
+assert.match(turnSource, /const pending = preparePlayTurn\(/);
+assert.match(turnSource, /const next = completePlayTurn\(\{/);
+assert.match(turnSource, /catch \(e\)[\s\S]*?setS\(pending\.base\)/);
 assert.match(
   playSource,
   /await persist\(s\);[\s\S]*?catch \(e\)[\s\S]*?e instanceof Error \? e\.message/,

@@ -30,6 +30,11 @@ const compatibleParameters: ProviderParameterPreset = {
   timeout: 60,
 };
 
+const ollamaParameters: ProviderParameterPreset = {
+  ...compatibleParameters,
+  timeout: 180,
+};
+
 export type ProviderPreset = {
   id: string;
   name: string;
@@ -44,6 +49,16 @@ export type ProviderPreset = {
 };
 
 export const PROVIDERS: ProviderPreset[] = [
+  {
+    id: "ollama",
+    name: "Ollama（本地）",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "qwen3:8b",
+    description:
+      "连接本机 Ollama 的 OpenAI 兼容接口；无需 API Key，模型名称需与本地已安装模型一致。",
+    modelHint: "填写 ollama list 中显示的模型名称，例如 qwen3:8b。",
+    parameters: ollamaParameters,
+  },
   {
     id: "deepseek",
     name: "DeepSeek",
@@ -120,5 +135,8 @@ export const PROVIDERS: ProviderPreset[] = [
 ];
 
 export function getProviderPreset(id: string) {
-  return PROVIDERS.find((provider) => provider.id === id) ?? PROVIDERS[0];
+  return (
+    PROVIDERS.find((provider) => provider.id === id) ??
+    PROVIDERS.find((provider) => provider.id === "deepseek")!
+  );
 }

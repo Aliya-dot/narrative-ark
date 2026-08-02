@@ -1,0 +1,40 @@
+name: Bug 报告
+description: 报告可复现的问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请先移除 API 密钥、个人存档和其他敏感数据。安全漏洞请使用私密安全报告。
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      placeholder: 例如 0.1.5
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options: [Windows, Android, Web 开发环境]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: 1. …\n2. …\n3. …
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 预期结果与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 已脱敏日志或截图
+      description: 可直接拖入文件；请确认其中不含 API 密钥或个人信息。

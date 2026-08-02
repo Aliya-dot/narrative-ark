@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [],
+    "types": ["vite/client"],
+    "incremental": false
+  },
+  "include": [
+    "client/**/*.ts",
+    "client/**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "app/api/**",
+    "server/**",
+    "**/*.test.mts"
+  ]
+}

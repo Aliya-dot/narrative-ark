@@ -16,11 +16,19 @@ import {
 } from "lucide-react";
 import { getProviderPreset, PROVIDERS } from "@/lib/providers";
 import { parseCustomHeaders, validateApiBaseUrl } from "@/lib/ai-config";
-import { db } from "@/lib/db";
+import {
+  deleteAIConfig,
+  describeAIConfigStorage,
+  loadAIConfig,
+  saveAIConfig,
+} from "@/lib/ai-config-repository";
 import type { AIConfig } from "@/lib/types";
 import { testConnection } from "@/lib/ai-client";
+import { withTimeout } from "@/lib/promise-timeout";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/common";
+import { LocalDataSettingsPanel } from "@/components/local-data-settings-panel";
+import { AppUpdateSettingsPanel } from "@/components/app-update-settings-panel";
 
 type StylePreset = "stable" | "balanced" | "creative" | "custom";
 type ConnectionResult = {
@@ -30,6 +38,7 @@ type ConnectionResult = {
 };
 
 const defaultProvider = getProviderPreset("deepseek");
+const CONFIG_STORAGE_TIMEOUT_MS = 30_000;
 const defaults: AIConfig = {
   id: "active",
   provider: defaultProvider.id,
@@ -130,10 +139,17 @@ function topPDescription(value: number) {
   return "基本不主动限制候选范围";
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
+}
+
 export default function Settings() {
   const [form, setForm] = useState(defaults);
   const [show, setShow] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [headers, setHeaders] = useState("{}");
   const [stylePreset, setStylePreset] = useState<StylePreset>("balanced");
@@ -141,12 +157,14 @@ export default function Settings() {
   const [connection, setConnection] = useState<ConnectionResult>();
 
   const selectedProvider = getProviderPreset(form.provider);
+  const isOllama = form.provider === "ollama";
   const parameters = selectedProvider.parameters;
   const support = form.parameterSupport ?? {
     temperature: parameters.temperature.supported,
     topP: parameters.topP.supported,
     maxTokens: parameters.maxTokens.supported,
   };
+  const connectionInFlight = testing && !connection;
 
   const headersError = useMemo(() => {
     try {
@@ -160,19 +178,19 @@ export default function Settings() {
   const baseUrlError = useMemo(() => {
     if (!form.baseUrl.trim()) return "";
     try {
-      validateApiBaseUrl(form.baseUrl);
+      validateApiBaseUrl(form.baseUrl, { allowLoopback: isOllama });
       return "";
     } catch (error) {
       return error instanceof Error ? error.message : "API 地址格式错误";
     }
-  }, [form.baseUrl]);
+  }, [form.baseUrl, isOllama]);
 
   const samplingWarning =
     Math.abs(form.temperature - parameters.temperature.defaultValue) >= 0.35 &&
     Math.abs(form.topP - parameters.topP.defaultValue) >= 0.15;
 
   useEffect(() => {
-    db.configs.get("active").then((value) => {
+    loadAIConfig().then((value) => {
       if (!value) return;
       const preset = getProviderPreset(value.provider);
       setForm({
@@ -258,10 +276,31 @@ export default function Settings() {
   }
 
   function currentConfig() {
-    if (!form.apiKey.trim()) throw new Error("请输入 API Key");
-    validateApiBaseUrl(form.baseUrl);
+    if (!isOllama && !form.apiKey.trim()) throw new Error("请输入 API Key");
+    validateApiBaseUrl(form.baseUrl, { allowLoopback: isOllama });
     if (!form.model.trim()) throw new Error("请输入模型名称");
     return { ...form, headers: parseCustomHeaders(headers) };
+  }
+
+  async function persistConfig(
+    config: AIConfig,
+    successMessage?: string,
+  ): Promise<boolean> {
+    setSaving(true);
+    try {
+      await withTimeout(
+        saveAIConfig(config),
+        CONFIG_STORAGE_TIMEOUT_MS,
+        "系统安全存储响应超时，请重试保存配置",
+      );
+      if (successMessage) toast.success(successMessage);
+      return true;
+    } catch (error) {
+      toast.error(errorMessage(error, "保存失败"));
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function save() {
@@ -271,11 +310,10 @@ export default function Settings() {
         updatedAt: new Date().toISOString(),
         active: true,
       };
-      await db.configs.put(next);
       setForm(next);
-      toast.success("API 配置已保存在当前浏览器");
+      await persistConfig(next, describeAIConfigStorage());
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      toast.error(errorMessage(error, "保存失败"));
     }
   }
 
@@ -287,6 +325,7 @@ export default function Settings() {
       attemptedConfig = currentConfig();
       const result = await testConnection(attemptedConfig);
       setConnection(result);
+      setTesting(false);
       const verified = {
         ...attemptedConfig,
         active: true,
@@ -294,10 +333,11 @@ export default function Settings() {
         connectionVerifiedAt: new Date().toISOString(),
         connectionFailedAt: undefined,
       };
-      await db.configs.put(verified);
       setForm(verified);
       toast.success("连接成功");
+      void persistConfig(verified);
     } catch (error) {
+      setTesting(false);
       if (attemptedConfig) {
         const failed = {
           ...attemptedConfig,
@@ -305,10 +345,10 @@ export default function Settings() {
           connectionVerifiedAt: undefined,
           connectionFailedAt: new Date().toISOString(),
         };
-        await db.configs.put(failed);
         setForm(failed);
+        void persistConfig(failed);
       }
-      toast.error(error instanceof Error ? error.message : "连接失败");
+      toast.error(errorMessage(error, "连接失败"));
     } finally {
       setTesting(false);
     }
@@ -386,11 +426,17 @@ export default function Settings() {
                 openHelp={openHelp}
                 setOpenHelp={setOpenHelp}
                 help={
-                  <>
-                    必须包含
-                    https://。不要填写聊天网页或控制台地址，也不要重复拼接完整聊天路径。当前公开代理禁止
-                    HTTP、本机和内网地址。
-                  </>
+                  isOllama ? (
+                    <>
+                      Ollama 默认地址为
+                      http://127.0.0.1:11434/v1。这里只放行本机回环地址，不接受其他内网地址。
+                    </>
+                  ) : (
+                    <>
+                      必须包含
+                      https://。不要填写聊天网页或控制台地址，也不要重复拼接完整聊天路径。
+                    </>
+                  )
                 }
               />
               <input
@@ -398,24 +444,34 @@ export default function Settings() {
                 className="input mono text-sm"
                 value={form.baseUrl}
                 onChange={(event) => change("baseUrl", event.target.value)}
-                placeholder="https://api.example.com/v1"
+                placeholder={
+                  isOllama
+                    ? "http://127.0.0.1:11434/v1"
+                    : "https://api.example.com/v1"
+                }
                 aria-invalid={Boolean(baseUrlError)}
               />
               <p
                 className={`text-xs leading-5 ${baseUrlError ? "text-[var(--danger)]" : "muted"}`}
               >
                 {baseUrlError ||
-                  "模型 API 的基础地址；使用官方预设时通常不需要修改。"}
+                  (isOllama
+                    ? "本机 Ollama 默认使用 11434 端口和 /v1 兼容路径。"
+                    : "模型 API 的基础地址；使用官方预设时通常不需要修改。")}
               </p>
             </div>
 
             <div className="field md:col-span-2">
               <FieldTitle
                 id="api-key"
-                title="API Key"
+                title={isOllama ? "API Key（可留空）" : "API Key"}
                 openHelp={openHelp}
                 setOpenHelp={setOpenHelp}
-                help="使用模型服务商创建的 API Key，不是网站账号密码。不要把密钥放进截图、自定义请求头、分享链接或公开仓库。"
+                help={
+                  isOllama
+                    ? "本机 Ollama 默认无需 API Key，此项可以留空。"
+                    : "使用模型服务商创建的 API Key，不是网站账号密码。不要把密钥放进截图、自定义请求头、分享链接或公开仓库。"
+                }
               />
               <div className="relative">
                 <input
@@ -425,7 +481,7 @@ export default function Settings() {
                   value={form.apiKey}
                   onChange={(event) => change("apiKey", event.target.value)}
                   autoComplete="off"
-                  placeholder="sk-..."
+                  placeholder={isOllama ? "本地 Ollama 无需填写" : "sk-..."}
                 />
                 <button
                   type="button"
@@ -437,7 +493,9 @@ export default function Settings() {
                 </button>
               </div>
               <p className="muted text-xs leading-5">
-                密钥只保存在当前浏览器，测试和生成时才临时交给服务端代理。
+                {isOllama
+                  ? "本地 Ollama 请求不会发送 Authorization 请求头。"
+                  : "密钥只保存在当前浏览器，测试和生成时才临时交给服务端代理。"}
               </p>
             </div>
 
@@ -689,20 +747,23 @@ export default function Settings() {
             <button
               className="btn btn-primary"
               onClick={save}
-              disabled={Boolean(headersError || baseUrlError)}
+              disabled={saving || Boolean(headersError || baseUrlError)}
             >
               <Save size={16} />
-              保存配置
+              {saving ? "正在保存…" : "保存配置"}
             </button>
             <button
               className="btn"
               onClick={test}
               disabled={
-                testing || !form.apiKey || Boolean(headersError || baseUrlError)
+                connectionInFlight ||
+                saving ||
+                (!isOllama && !form.apiKey) ||
+                Boolean(headersError || baseUrlError)
               }
             >
               <PlugZap size={16} />
-              {testing ? "正在测试…" : "测试连接"}
+              {connectionInFlight ? "正在测试…" : "测试连接"}
             </button>
             <button
               className="btn btn-danger ml-auto"
@@ -718,6 +779,9 @@ export default function Settings() {
           当前使用模型：{form.model || "尚未设置"}
           。共享设备和恶意浏览器脚本仍可能读取本地数据，请勿在不可信设备保存密钥。
         </div>
+
+        <LocalDataSettingsPanel />
+        <AppUpdateSettingsPanel />
       </div>
 
       <ConfirmDialog
@@ -726,7 +790,7 @@ export default function Settings() {
         description="本机保存的服务商、模型和 API Key 都会被移除。"
         onCancel={() => setConfirm(false)}
         onConfirm={async () => {
-          await db.configs.delete("active");
+          await deleteAIConfig();
           setForm(defaults);
           setHeaders("{}");
           setStylePreset("balanced");

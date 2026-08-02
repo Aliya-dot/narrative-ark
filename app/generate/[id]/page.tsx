@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, LoaderCircle, RotateCcw, Square, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type { AIConfig, GameProject, GenerationDraft } from "@/lib/types";
 import { emptyProject } from "@/lib/project";
 import { generateStage } from "@/lib/ai-client";
@@ -52,10 +53,7 @@ export default function Generate() {
   const started = useRef(false);
   useEffect(() => {
     void (async () => {
-      const [r, c] = await Promise.all([
-        db.drafts.get(id),
-        db.configs.get("active"),
-      ]);
+      const [r, c] = await Promise.all([db.drafts.get(id), loadAIConfig()]);
       if (r) {
         const v = r.value as GenerationDraft | Persisted;
         if ("draft" in v) setState(v);

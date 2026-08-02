@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
-import type {
-  WorldBook,
-  WorldBookEntry,
-  WorldBookVersion,
-} from "./types.ts";
+import type { WorldBook, WorldBookEntry, WorldBookVersion } from "./types.ts";
 import type {
   WorldBookPublishRecords,
   WorldBookPublishStorage,
@@ -65,7 +61,9 @@ class RevisionStore
   }
 
   async putEntries(entries: WorldBookEntry[]) {
-    this.events.push(`putEntries:${entries.map((entry) => entry.id).join(",")}`);
+    this.events.push(
+      `putEntries:${entries.map((entry) => entry.id).join(",")}`,
+    );
     for (const entry of entries)
       this.entries.set(entry.id, structuredClone(entry));
   }
@@ -167,7 +165,10 @@ function execute(
   });
 }
 
-function assertReadOnly(store: RevisionStore, before: ReturnType<RevisionStore["snapshot"]>) {
+function assertReadOnly(
+  store: RevisionStore,
+  before: ReturnType<RevisionStore["snapshot"]>,
+) {
   assert.deepEqual(store.snapshot(), before);
   assert.equal(
     store.events.some((event) =>
@@ -339,7 +340,12 @@ for (const proposed of [
   store.books.set(current.book.id, structuredClone(current.book));
   store.entries.set(current.entry.id, structuredClone(current.entry));
   store.versions.set(current.version.id, structuredClone(current.version));
-  const result = await execute(store, revision(current.book), candidate(), proposed);
+  const result = await execute(
+    store,
+    revision(current.book),
+    candidate(),
+    proposed,
+  );
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.equal(
@@ -356,20 +362,28 @@ for (const proposed of [
     new URL("../app/worldbooks/[id]/page.tsx", import.meta.url),
     "utf8",
   );
-  const existingStart = page.indexOf(
+  const workspace = await readFile(
+    new URL("./world-book-editor-workspace.ts", import.meta.url),
+    "utf8",
+  );
+  const existingStart = workspace.indexOf(
     "const [storedBook, storedEntries, storedDraft]",
   );
-  const loadEnd = page.indexOf("hydrated.current = true;", existingStart);
-  const existingLoad = page.slice(existingStart, loadEnd);
+  const loadEnd = workspace.indexOf(
+    "const normalized = normalizeWorldBookEditorEntries",
+    existingStart,
+  );
+  const existingLoad = workspace.slice(existingStart, loadEnd);
   assert.match(
     existingLoad,
-    /setFormalRevision\(\{\s*currentVersionId: storedBook\.currentVersionId,\s*versionNumber: storedBook\.versionNumber,\s*updatedAt: storedBook\.updatedAt/,
+    /const revision: WorldBookRevision = \{\s*currentVersionId: storedBook\.currentVersionId,\s*versionNumber: storedBook\.versionNumber,\s*updatedAt: storedBook\.updatedAt/,
   );
   assert.ok(
-    existingLoad.indexOf("setFormalRevision({") <
-      existingLoad.indexOf("const value = storedDraft"),
+    existingLoad.indexOf("const revision: WorldBookRevision") <
+      existingLoad.indexOf("isWorldBookEditorDraft(storedDraft?.value)"),
   );
   assert.doesNotMatch(existingLoad, /updatedAt: value\.book\.updatedAt/);
+  assert.match(page, /setFormalRevision\(workspace\.revision\)/);
 
   const publishStart = page.indexOf("async function publish()");
   const publishEnd = page.indexOf("if (loading || !book)", publishStart);

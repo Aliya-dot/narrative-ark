@@ -3,15 +3,21 @@ import Link from "next/link";
 import { BookOpen, Library, Settings } from "lucide-react";
 import { Toaster } from "sonner";
 import { ThemePicker } from "@/components/theme-picker";
+import { AppUpdateController } from "@/components/app-update-controller";
+import { BRAND_MARK_PATHS, BRAND_MARK_VIEW_BOX } from "@/lib/brand-mark-data";
 
 function BrandMark() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 48 52">
-      <path d="M24 2 36 27 24 43 12 27 24 2Z" fill="currentColor" />
-      <path d="M24 9v26" stroke="var(--ink)" strokeWidth="2" />
+    <svg aria-hidden="true" viewBox={BRAND_MARK_VIEW_BOX}>
+      <path d={BRAND_MARK_PATHS.compass} fill="currentColor" />
+      <path
+        d={BRAND_MARK_PATHS.compassNeedle}
+        stroke="var(--ink)"
+        strokeWidth="2"
+      />
       <circle cx="24" cy="27" fill="var(--gold)" r="2.5" />
       <path
-        d="M11 37c-5-1-8 1-9 5 5 1 8-1 9-5Zm26 0c5-1 8 1 9 5-5 1-8-1-9-5ZM15 43c-4 0-6 2-6 5 4 0 6-2 6-5Zm18 0c4 0 6 2 6 5-4 0-6-2-6-5Z"
+        d={BRAND_MARK_PATHS.ornaments}
         fill="none"
         stroke="var(--gold)"
         strokeWidth="1.2"
@@ -67,6 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
       <main>{children}</main>
+      <AppUpdateController />
       <Toaster position="top-center" toastOptions={{ className: "toast" }} />
     </>
   );

@@ -67,6 +67,11 @@ export const STORY_LENGTH_PRESETS: Record<GameLength, StoryLengthPreset> = {
   },
 };
 
+export function storyLengthBadge(value: unknown) {
+  const label = STORY_LENGTH_PRESETS[normalizeGameLength(value)].label;
+  return label.endsWith("篇") ? label : `${label}篇`;
+}
+
 export function normalizeGameLength(value: unknown): GameLength {
   const text = String(value ?? "")
     .trim()

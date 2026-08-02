@@ -6,6 +6,7 @@ import {
   lengthPlanningInstruction,
   storyLengthMeta,
 } from "./story-length";
+import { savePortableText } from "./platform/portable-files";
 const names: Record<string, string> = {
   projectInfo: "游戏总览",
   world: "世界观",
@@ -113,18 +114,17 @@ async function record(p: GameProject, format: string) {
   });
 }
 export async function exportTxt(p: GameProject) {
-  download(
-    new Blob([projectText(p)], { type: "text/plain;charset=utf-8" }),
-    `${p.projectInfo.title}.txt`,
-  );
+  await savePortableText(`${p.projectInfo.title}.txt`, projectText(p), {
+    extensions: ["txt"],
+    mimeType: "text/plain;charset=utf-8",
+  });
   await record(p, "txt");
 }
 export async function exportJson(p: GameProject) {
-  download(
-    new Blob([JSON.stringify(p, null, 2)], {
-      type: "application/json;charset=utf-8",
-    }),
+  await savePortableText(
     `${p.projectInfo.title}.json`,
+    JSON.stringify(p, null, 2),
+    { extensions: ["json"] },
   );
   await record(p, "json");
 }
@@ -136,11 +136,13 @@ export async function exportCurrentGame(p: GameProject, s: GameSave) {
     project: p,
     save: s,
   };
-  download(
-    new Blob([JSON.stringify(bundle, null, 2)], {
-      type: "application/json;charset=utf-8",
-    }),
-    `${p.projectInfo.title}-第${s.turn}回合-游戏包.json`,
+  await savePortableText(
+    `${p.projectInfo.title}-第${s.turn}回合-游戏包.nark`,
+    JSON.stringify(bundle, null, 2),
+    {
+      title: "导出当前游戏包",
+      extensions: ["nark", "json"],
+    },
   );
   await record(p, "game-bundle");
 }
@@ -351,7 +353,7 @@ export async function exportAiPlayPackage(p: GameProject) {
       <li>你是本游戏的主持人、旁白和所有 NPC 的扮演者。玩家第一次输入“开始”时，从第 0 回合创建全新游戏，不得假设存在任何历史进度。</li>
       <li>严格遵守本包体中的世界、角色、能力、任务、大纲和结局条件；允许玩家改变通往目标的路径，但不能无理由跳过关键因果。</li>
       <li>不得替玩家决定行动或描述玩家未表达的心理。NPC 拥有独立目标、记忆和态度，世界随时间与行为持续变化。</li>
-      <li>每回合输出 600～900 个中文字，分为 7～11 个短段。每段（包括独立对白段）首行缩进两个全角字符“　　”。</li>
+      <li>每回合输出 700～1500 个中文字，分为 7～14 个短段。每段（包括独立对白段）首行缩进两个全角字符“　　”。</li>
       <li>使用中文弯引号“”书写对白，不在尚未闭合的引号中换段。场景、说话者或行动焦点改变时另起一段。</li>
       <li>每回合必须有实质推进，不能用重复环境描写凑字数；结尾提供 3～5 个差异明确的选项，同时接受玩家自由行动。</li>
       <li>根据游戏篇幅控制节奏，不提前揭晓核心秘密，不仓促进入结局。重要行动依据属性、环境、关系和难度进行合理判定。</li>
@@ -441,12 +443,12 @@ function escapeHtml(s: string) {
       ]!,
   );
 }
-export function exportLog(p: GameProject, s: GameSave) {
+export async function exportLog(p: GameProject, s: GameSave) {
   const text =
     `${p.projectInfo.title} · ${s.name}\n\n` +
     s.recentMessages.map((m) => `[${m.role}] ${m.content}`).join("\n\n");
-  download(
-    new Blob([text], { type: "text/plain;charset=utf-8" }),
-    `${p.projectInfo.title}-游戏记录.txt`,
-  );
+  await savePortableText(`${p.projectInfo.title}-游戏记录.txt`, text, {
+    extensions: ["txt"],
+    mimeType: "text/plain;charset=utf-8",
+  });
 }

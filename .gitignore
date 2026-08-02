@@ -1,8 +1,13 @@
 # Dependencies and build output
 node_modules/
+.tools/
+.npm-cache/
 .next/
 out/
 dist/
+dist-client/
+src-tauri/target/
+src-tauri/gen/schemas/
 coverage/
 *.tsbuildinfo
 
@@ -17,9 +22,16 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+.release-secrets/
+.android-sdk/
+.gradle-home/
+.cargo-validation/
+src-tauri/tauri.release.conf.json
 
 # Local temporary data and invalid repository recovery copies
 tmp/
+.tmp-*/
+.data/
 .git.invalid-backup-*/
 
 # Editor and operating-system files
@@ -34,3 +46,6 @@ Thumbs.db
 # Archives
 *.rar
 *.zip
+
+# Local release verification
+release-artifacts/

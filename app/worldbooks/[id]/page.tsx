@@ -24,7 +24,7 @@ import { WorldBookQuickTriggerSettings } from "@/components/world-book-quick-tri
 import { WorldBookRepairPanel } from "@/components/world-book-repair-panel";
 import { WorldBookRetrievalTester } from "@/components/world-book-retrieval-tester";
 import { WorldBookTagInput } from "@/components/world-book-tag-input";
-import { db, uid } from "@/lib/db";
+import { uid } from "@/lib/db";
 import { ensureUniqueWorldBookEntryIds } from "@/lib/world-book-entry-identity";
 import type {
   WorldBook,
@@ -36,10 +36,8 @@ import type {
 import type { GeneratedWorldBookDraft } from "@/lib/world-book-ai";
 import { generatedDraftToEntries } from "@/lib/world-book-ai";
 import {
-  createWorldBook,
   createWorldBookEntry,
   estimateWorldBookTokens,
-  extractWorldBookFromProject,
   normalizeWorldBookEntry,
   resolveWorldBookActivationMode,
   withWorldBookActivationMode,
@@ -74,6 +72,14 @@ import {
   type WorldBookRevision,
 } from "@/lib/world-book-publish-boundary";
 import { worldBookPublishStorage } from "@/lib/world-book-publish-storage";
+import { worldBookEditorStorage } from "@/lib/world-book-editor-storage";
+import {
+  createSequentialWorldBookDraftSaver,
+  loadWorldBookEditorWorkspace,
+  readWorldBookEditorMode,
+  worldBookEditorDraftRecord,
+  writeWorldBookEditorMode,
+} from "@/lib/world-book-editor-workspace";
 
 type AiStudioMode = "full" | "fill" | "category" | "entry";
 type UndoSnapshot = {
@@ -86,12 +92,6 @@ type RepairUndo = {
   affectedEntryIds: string[];
 };
 
-type DraftValue = {
-  kind: "world-book-editor-v1";
-  book: WorldBook;
-  entries: WorldBookEntry[];
-  selectedId: string;
-};
 type DraftStatus = "clean" | "dirty" | "saving" | "saved" | "error";
 
 const IMPORTANCE = [
@@ -101,10 +101,6 @@ const IMPORTANCE = [
   { value: 70, label: "高" },
   { value: 90, label: "核心优先级" },
 ] as const;
-
-function normalizeEntryCollection(entries: WorldBookEntry[]) {
-  return ensureUniqueWorldBookEntryIds(entries.map(normalizeWorldBookEntry));
-}
 
 function importanceValue(value: number) {
   return IMPORTANCE.reduce((best, item) =>
@@ -143,6 +139,8 @@ export default function WorldBookEditorPage() {
     WorldBookEntryActivationMode | "all" | "incomplete"
   >("all");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [publishing, setPublishing] = useState(false);
   const [formalRevision, setFormalRevision] = useState<WorldBookRevision>();
   const [draftStatus, setDraftStatus] = useState<DraftStatus>("clean");
@@ -160,7 +158,13 @@ export default function WorldBookEditorPage() {
   const [repairSuggestionId, setRepairSuggestionId] = useState<string>();
   const [lastRepairUndo, setLastRepairUndo] = useState<RepairUndo>();
   const hydrated = useRef(false);
+  const skipNextAutosave = useRef(false);
+  const draftSaveSequence = useRef(0);
   const draftKey = `worldbook:${id}`;
+  const draftSaver = useMemo(
+    () => createSequentialWorldBookDraftSaver(worldBookEditorStorage),
+    [],
+  );
 
   useEffect(() => {
     if (!entryIdentity.repairs.length) return;
@@ -168,166 +172,85 @@ export default function WorldBookEditorPage() {
   }, [entryIdentity]);
 
   useEffect(() => {
-    const key = `narrative-ark:worldbook-mode:${id}`;
-    const stored = window.localStorage.getItem(key);
-    setEditorMode(
-      stored === "quick" || stored === "professional"
-        ? stored
-        : id === "new"
-          ? "quick"
-          : "professional",
-    );
+    setEditorMode(readWorldBookEditorMode(window.localStorage, id));
   }, [id]);
 
   useEffect(() => {
-    void (async () => {
-      if (id === "new") {
-        const projectId = new URLSearchParams(window.location.search).get(
-          "project",
-        );
-        if (projectId) {
-          const project = await db.projects.get(projectId);
-          if (project) {
-            const extracted = extractWorldBookFromProject(
-              project,
-              uid("world"),
-            );
-            setBook({
-              ...extracted.book,
-              coreSummaryStatus: extracted.book.coreSummary
-                ? "current"
-                : "empty",
-            });
-            const normalized = normalizeEntryCollection(extracted.entries);
-            setEntries(normalized.entries);
-            setSelectedId(normalized.entries[0]?.id || "");
-            setFormalRevision({
-              currentVersionId: null,
-              versionNumber: 0,
-              updatedAt: extracted.book.updatedAt,
-            });
-            hydrated.current = true;
-            setLoading(false);
-            return;
-          }
+    let active = true;
+    hydrated.current = false;
+    setLoading(true);
+    setLoadError("");
+    setBook(undefined);
+    setFormalRevision(undefined);
+    void loadWorldBookEditorWorkspace({
+      worldBookId: id,
+      projectId: new URLSearchParams(window.location.search).get("project"),
+      storage: worldBookEditorStorage,
+      createWorldBookId: () => uid("world"),
+    })
+      .then((workspace) => {
+        if (!active) return;
+        if (workspace.kind === "missing") {
+          toast.error("没有找到这本世界书");
+          router.replace("/worldbooks");
+          return;
         }
-        const storedDraft = await db.drafts.get(draftKey);
-        const value = storedDraft?.value as DraftValue | undefined;
-        if (value?.kind === "world-book-editor-v1") {
-          const normalized = normalizeEntryCollection(value.entries);
-          setBook({
-            ...value.book,
-            entryIds: normalized.entries.map((entry) => entry.id),
-          });
-          setEntries(normalized.entries);
-          setSelectedId(
-            normalized.entries.some((entry) => entry.id === value.selectedId)
-              ? value.selectedId
-              : normalized.entries[0]?.id || "",
+        skipNextAutosave.current = true;
+        setBook(workspace.book);
+        setEntries(workspace.entries);
+        setSelectedId(workspace.selectedId);
+        setFormalRevision(workspace.revision);
+        setDraftStatus(workspace.draftStatus);
+        if (workspace.repairedEntryCount)
+          toast.warning(
+            `已修复 ${workspace.repairedEntryCount} 张重复 ID 的资料卡，内容没有被删除`,
           );
-          setFormalRevision({
-            currentVersionId: null,
-            versionNumber: 0,
-            updatedAt: value.book.updatedAt,
-          });
-          if (normalized.repairs.length)
-            toast.warning(
-              `已修复 ${normalized.repairs.length} 张重复 ID 的资料卡，内容没有被删除`,
-            );
-        } else {
-          const created = createWorldBook(uid("world"));
-          setBook(created.book);
-          setEntries([]);
-          setFormalRevision({
-            currentVersionId: null,
-            versionNumber: 0,
-            updatedAt: created.book.updatedAt,
-          });
-        }
         hydrated.current = true;
-        setLoading(false);
-        return;
-      }
-      const [storedBook, storedEntries, storedDraft] = await Promise.all([
-        db.worldBooks.get(id),
-        db.worldBookEntries.where("worldBookId").equals(id).toArray(),
-        db.drafts.get(draftKey),
-      ]);
-      if (!storedBook) {
-        toast.error("没有找到这本世界书");
-        router.replace("/worldbooks");
-        return;
-      }
-      setFormalRevision({
-        currentVersionId: storedBook.currentVersionId,
-        versionNumber: storedBook.versionNumber,
-        updatedAt: storedBook.updatedAt,
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error("加载世界书工作区失败", error);
+        setLoadError("世界书加载失败，请检查本地数据后重试。");
+        toast.error("世界书加载失败");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
-      const value = storedDraft?.value as DraftValue | undefined;
-      if (value?.kind === "world-book-editor-v1" && value.book.id === id) {
-        const normalized = normalizeEntryCollection(value.entries);
-        setBook({
-          ...value.book,
-          entryIds: normalized.entries.map((entry) => entry.id),
-        });
-        setEntries(normalized.entries);
-        setSelectedId(
-          normalized.entries.some((entry) => entry.id === value.selectedId)
-            ? value.selectedId
-            : normalized.entries[0]?.id || "",
-        );
-        if (normalized.repairs.length)
-          toast.warning(
-            `已修复 ${normalized.repairs.length} 张重复 ID 的资料卡，内容没有被删除`,
-          );
-        setDraftStatus("saved");
-      } else {
-        const normalized = normalizeEntryCollection(storedEntries);
-        const sorted = normalized.entries.sort(
-          (a, b) => b.priority - a.priority,
-        );
-        setBook({
-          ...storedBook,
-          entryIds: sorted.map((entry) => entry.id),
-          coreSummaryStatus:
-            storedBook.coreSummaryStatus ||
-            (storedBook.coreSummary ? "current" : "empty"),
-        });
-        setEntries(sorted);
-        setSelectedId(sorted[0]?.id || "");
-        if (normalized.repairs.length)
-          toast.warning(
-            `已修复 ${normalized.repairs.length} 张重复 ID 的资料卡，内容没有被删除`,
-          );
-      }
-      hydrated.current = true;
-      setLoading(false);
-    })();
-  }, [draftKey, id, router, setEntries]);
+    return () => {
+      active = false;
+      hydrated.current = false;
+    };
+  }, [id, loadAttempt, router, setEntries]);
 
   useEffect(() => {
     if (!hydrated.current || !book || loading) return;
+    if (skipNextAutosave.current) {
+      skipNextAutosave.current = false;
+      return;
+    }
+    const sequence = ++draftSaveSequence.current;
     setDraftStatus("dirty");
     const timer = window.setTimeout(async () => {
+      if (draftSaveSequence.current !== sequence) return;
       setDraftStatus("saving");
-      try {
-        await db.drafts.put({
-          id: draftKey,
-          value: {
-            kind: "world-book-editor-v1",
-            book,
-            entries,
-            selectedId,
-          } satisfies DraftValue,
-          updatedAt: new Date().toISOString(),
-        });
-        setDraftStatus("saved");
-      } catch {
-        setDraftStatus("error");
-      }
+      const result = await draftSaver.save(
+        worldBookEditorDraftRecord(
+          draftKey,
+          book,
+          entries,
+          selectedId,
+          new Date().toISOString(),
+        ),
+      );
+      if (draftSaveSequence.current !== sequence) return;
+      setDraftStatus(result.ok ? "saved" : "error");
     }, 700);
-    return () => window.clearTimeout(timer);
-  }, [book, entries, selectedId, draftKey, loading]);
+    return () => {
+      window.clearTimeout(timer);
+      if (draftSaveSequence.current === sequence)
+        draftSaveSequence.current += 1;
+    };
+  }, [book, entries, selectedId, draftKey, draftSaver, loading]);
 
   const selected = entries.find((entry) => entry.id === selectedId);
   const filtered = useMemo(() => {
@@ -389,12 +312,18 @@ export default function WorldBookEditorPage() {
       setActivationFilter("all");
       setEntries((items) => items.map(refreshAutoWorldBookTriggers));
     }
-    window.localStorage.setItem(`narrative-ark:worldbook-mode:${id}`, next);
+    const preferenceSaved = writeWorldBookEditorMode(
+      window.localStorage,
+      id,
+      next,
+    );
     toast.success(
       next === "quick"
         ? "已切换到快速模式，高级设置仍会保留"
         : "已切换到专业模式，可查看全部调用规则",
     );
+    if (!preferenceSaved)
+      toast.warning("模式已经切换，但浏览器没有保存这项偏好。");
   }
 
   function updateBook(patch: Partial<WorldBook>) {
@@ -676,7 +605,7 @@ export default function WorldBookEditorPage() {
       setEntries(result.entries);
       setFormalRevision(result.revision);
       const cleanup = await cleanupPublishedWorldBookDraft(() =>
-        db.drafts.delete(draftKey),
+        worldBookEditorStorage.deleteDraft(draftKey),
       );
       setDraftStatus(cleanup === "clean" ? "clean" : "saved");
       window.setTimeout(() => {
@@ -699,8 +628,29 @@ export default function WorldBookEditorPage() {
     }
   }
 
-  if (loading || !book)
+  if (loading)
     return <div className="container py-16 muted">正在加载世界书…</div>;
+  if (loadError || !book)
+    return (
+      <div className="container py-16">
+        <div className="panel mx-auto max-w-xl p-6 text-center">
+          <h1 className="mb-2 text-xl font-semibold">世界书加载失败</h1>
+          <p className="muted mb-5">{loadError || "没有找到这本世界书。"}</p>
+          <div className="flex justify-center gap-3">
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => setLoadAttempt((current) => current + 1)}
+            >
+              重新加载
+            </button>
+            <Link className="btn" href="/worldbooks">
+              返回列表
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   const statusText = {
     clean: "正式版本已保存",
     dirty: "有未保存草稿",

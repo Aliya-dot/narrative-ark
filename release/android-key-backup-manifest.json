@@ -1,0 +1,29 @@
+{
+    "schemaVersion":  1,
+    "generatedAt":  "2026-07-29T04:52:53.8976567Z",
+    "backupCount":  3,
+    "storageStatus":  "offline-ready archives; copy each file to a separate encrypted disconnected medium",
+    "backups":  [
+                    {
+                        "file":  "Narrative-Ark-Android-Key-Backup-A.zip",
+                        "size":  6466,
+                        "sha256":  "620f6ac9039507c2e8b8ae8a8139d69c6693440dfda451ea0e3b8575f10ab851",
+                        "certificateSha256":  "44188ff6d1722dbf11445bb7041e99cc5f88ea93d27dfa4feb83eebf80774351",
+                        "verified":  true
+                    },
+                    {
+                        "file":  "Narrative-Ark-Android-Key-Backup-B.zip",
+                        "size":  6466,
+                        "sha256":  "620f6ac9039507c2e8b8ae8a8139d69c6693440dfda451ea0e3b8575f10ab851",
+                        "certificateSha256":  "44188ff6d1722dbf11445bb7041e99cc5f88ea93d27dfa4feb83eebf80774351",
+                        "verified":  true
+                    },
+                    {
+                        "file":  "Narrative-Ark-Android-Key-Backup-C.zip",
+                        "size":  6466,
+                        "sha256":  "620f6ac9039507c2e8b8ae8a8139d69c6693440dfda451ea0e3b8575f10ab851",
+                        "certificateSha256":  "44188ff6d1722dbf11445bb7041e99cc5f88ea93d27dfa4feb83eebf80774351",
+                        "verified":  true
+                    }
+                ]
+}

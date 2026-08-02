@@ -3,7 +3,7 @@ import { compactSummary } from "./text";
 import { parseModelJson } from "./json-repair";
 export const configSchema = z.object({
   provider: z.string(),
-  apiKey: z.string().min(1, "请输入 API Key"),
+  apiKey: z.string(),
   baseUrl: z.string().url("请输入有效地址"),
   model: z.string().min(1, "请输入模型名称"),
   maxTokens: z.number().min(256).max(64000),

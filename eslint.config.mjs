@@ -11,5 +11,15 @@ export default defineConfig([
       "react-hooks/incompatible-library": "off",
     },
   },
-  globalIgnores([".next/**", "node_modules/**", "next-env.d.ts"]),
+  globalIgnores([
+    ".next/**",
+    "dist-client/**",
+    "node_modules/**",
+    ".android-sdk/**",
+    ".gradle-home/**",
+    "release-artifacts/**",
+    "src-tauri/gen/android/**/build/**",
+    "src-tauri/target/**",
+    "next-env.d.ts",
+  ]),
 ]);

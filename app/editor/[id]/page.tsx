@@ -1,7 +1,7 @@
 "use client";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Bot,
   Braces,
@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { db, uid } from "@/lib/db";
+import { loadAIConfig } from "@/lib/ai-config-repository";
 import type {
   AIConfig,
   GameProject,
@@ -49,6 +50,11 @@ import { validateProjectIntegrity } from "@/lib/project-integrity";
 import { formatProjectIntegrityFailure } from "@/lib/project-integrity-summary";
 import { listProjectSaves } from "@/lib/project-save-boundary";
 import { projectSaveStorage } from "@/lib/project-save-storage";
+import {
+  readEditorTabProgress,
+  saveEditorTabProgress,
+  type EditorTabProgressMap,
+} from "@/lib/editor-tab-progress";
 const labels: Record<ModuleKey, string> = {
   projectInfo: "游戏总览",
   world: "世界观",
@@ -80,10 +86,15 @@ export default function Editor() {
     risk: SettingsRisk;
   }>();
   const savingRef = useRef(false);
+  const editorPanelRef = useRef<HTMLDivElement>(null);
+  const tabProgressRef = useRef<EditorTabProgressMap>({});
+  const pendingProgressRestoreRef = useRef<ModuleKey | undefined>(undefined);
   useEffect(() => {
+    tabProgressRef.current = {};
+    pendingProgressRestoreRef.current = undefined;
     Promise.all([
       db.projects.get(id),
-      db.configs.get("active"),
+      loadAIConfig(),
       listProjectSaves({ projectId: id, storage: projectSaveStorage }),
     ]).then(([a, c, projectSaves]) => {
       setConfig(c);
@@ -107,8 +118,26 @@ export default function Editor() {
       }
     });
   }, [id]);
+  useLayoutEffect(() => {
+    if (pendingProgressRestoreRef.current !== key) return;
+    const position = readEditorTabProgress(tabProgressRef.current, key);
+    const frame = requestAnimationFrame(() => {
+      if (editorPanelRef.current) {
+        editorPanelRef.current.scrollTop = position.panelY;
+      }
+      window.scrollTo({ top: position.pageY, behavior: "auto" });
+      pendingProgressRestoreRef.current = undefined;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [key]);
   function select(k: ModuleKey) {
     if (!p) return;
+    if (k === key) return;
+    saveEditorTabProgress(tabProgressRef.current, key, {
+      pageY: window.scrollY,
+      panelY: editorPanelRef.current?.scrollTop ?? 0,
+    });
+    pendingProgressRestoreRef.current = k;
     setKey(k);
     setValue(structuredClone(p[k]));
     setText(
@@ -430,7 +459,10 @@ export default function Editor() {
               </button>
             </div>
           )}
-          <div className="scrollbar my-5 min-h-[480px] flex-1 overflow-auto rounded-xl border border-[var(--line)] bg-[var(--ink)] p-4 md:p-5">
+          <div
+            ref={editorPanelRef}
+            className="scrollbar my-5 min-h-[480px] flex-1 overflow-auto rounded-xl border border-[var(--line)] bg-[var(--ink)] p-4 md:p-5"
+          >
             {key === "openingScene" || jsonMode ? (
               <textarea
                 className={`min-h-[440px] w-full resize-y bg-transparent outline-none ${jsonMode ? "font-mono text-sm leading-6" : "text-base leading-8"}`}

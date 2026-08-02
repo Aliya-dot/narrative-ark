@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#151713" />
+    <meta name="description" content="叙界 Narrative Ark 官方下载与赞助页面" />
+    <title>叙界 · Narrative Ark｜下载</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <header class="nav shell">
+      <a class="brand" href="#top" aria-label="叙界首页">
+        <span class="brand-mark">叙</span>
+        <span>叙界 <small>Narrative Ark</small></span>
+      </a>
+      <nav aria-label="主导航">
+        <a href="#download">下载</a>
+        <a href="#verify">校验</a>
+        <a href="#support">支持</a>
+        <a href="https://github.com/Aliya-dot/narrative-ark">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero shell">
+        <div class="eyebrow"><span></span> 开源 AI 文字冒险工作台</div>
+        <h1>写下一个世界，<br /><em>然后走进去。</em></h1>
+        <p class="lede">
+          在本地创建世界书、角色与分支故事。项目、存档和密钥由你掌控， Windows
+          与 Android 共用一致的数据格式。
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#download">获取最新版</a>
+          <a
+            class="button secondary"
+            href="https://github.com/Aliya-dot/narrative-ark"
+            >查看源代码</a
+          >
+        </div>
+        <div class="meta-strip" aria-label="项目特点">
+          <span><b>AGPL-3.0</b> 开源许可</span>
+          <span><b>Local-first</b> 本地优先</span>
+          <span><b>Win + Android</b> 双平台</span>
+        </div>
+      </section>
+
+      <section class="section shell" id="download">
+        <div class="section-heading">
+          <div>
+            <span class="index">01</span>
+            <h2>下载最新版</h2>
+          </div>
+          <p id="release-status" aria-live="polite">正在读取 GitHub Release…</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card windows">
+            <div class="platform-icon">⊞</div>
+            <div>
+              <p class="kicker">Windows 10+</p>
+              <h3>Windows x64</h3>
+              <p>推荐 NSIS 安装程序；也提供 MSI 包。</p>
+            </div>
+            <div class="asset-list" id="windows-assets">
+              <a
+                class="asset fallback"
+                href="https://github.com/Aliya-dot/narrative-ark/releases/latest"
+                >打开 Releases</a
+              >
+            </div>
+          </article>
+          <article class="download-card android">
+            <div class="platform-icon">◉</div>
+            <div>
+              <p class="kicker">Android 9+</p>
+              <h3>Android</h3>
+              <p>APK 可直接安装；AAB 供应用商店使用。</p>
+            </div>
+            <div class="asset-list" id="android-assets">
+              <a
+                class="asset fallback"
+                href="https://github.com/Aliya-dot/narrative-ark/releases/latest"
+                >打开 Releases</a
+              >
+            </div>
+          </article>
+        </div>
+        <p class="release-note">
+          当前为早期测试版本。Windows 安装包尚无 Authenticode 证书，系统可能显示
+          SmartScreen 提示；请从本页或官方 Releases 下载并核验摘要。
+        </p>
+      </section>
+
+      <section class="section inverse" id="verify">
+        <div class="shell verify-grid">
+          <div>
+            <span class="index">02</span>
+            <h2>每一份安装包，<br />都可以被验证。</h2>
+          </div>
+          <ol>
+            <li>
+              <b>下载</b><span>从官方 Release 获取安装包与校验清单。</span>
+            </li>
+            <li>
+              <b>计算</b
+              ><span
+                >在 PowerShell 运行
+                <code>Get-FileHash 文件路径 -Algorithm SHA256</code>。</span
+              >
+            </li>
+            <li>
+              <b>比对</b
+              ><span
+                >确认摘要与 Release 中的 manifest 或 SHA256SUMS 一致。</span
+              >
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section shell support" id="support">
+        <div class="section-heading">
+          <div>
+            <span class="index">03</span>
+            <h2>支持持续创作</h2>
+          </div>
+          <p>赞助完全自愿，不影响功能、许可或贡献优先级。</p>
+        </div>
+        <div class="support-grid">
+          <article class="afdian-card">
+            <span class="support-label">推荐方式</span>
+            <h3>在爱发电支持星之幻</h3>
+            <p>通过爱发电留下支持，也可以持续关注项目进展。</p>
+            <a class="button primary" href="https://ifdian.net/a/xingzhihuan"
+              >前往爱发电 ↗</a
+            >
+          </article>
+          <article class="qr-card">
+            <div>
+              <span class="support-label">备用方式</span>
+              <h3>微信收款码</h3>
+              <p>请在付款前核对收款方显示信息。</p>
+            </div>
+            <img
+              src="./assets/wechat-pay.png"
+              alt="星之幻的微信收款码"
+              width="220"
+              height="300"
+            />
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="shell">
+      <p>叙界 / Narrative Ark · 由社区与每一位创作者共同塑造</p>
+      <div>
+        <a
+          href="https://github.com/Aliya-dot/narrative-ark/blob/main/CHANGELOG.md"
+          >更新日志</a
+        >
+        <a
+          href="https://github.com/Aliya-dot/narrative-ark/blob/main/PRIVACY.md"
+          >隐私</a
+        >
+        <a
+          href="https://github.com/Aliya-dot/narrative-ark/blob/main/SECURITY.md"
+          >安全</a
+        >
+        <a href="https://github.com/Aliya-dot/narrative-ark/blob/main/LICENSE"
+          >AGPL-3.0</a
+        >
+      </div>
+    </footer>
+  </body>
+</html>

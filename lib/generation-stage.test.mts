@@ -308,9 +308,9 @@ check("pure validation errors do not leak raw values", () => {
   assert.equal(output.pathText, "openingScene");
 });
 
-check("generate route guards stage before chat and validates its result", () => {
+check("model execution guards stage before chat and validates its result", () => {
   const routeSource = readFileSync(
-    new URL("../app/api/ai/route.ts", import.meta.url),
+    new URL("./model-execution.ts", import.meta.url),
     "utf8",
   );
   const generateStart = routeSource.indexOf(
@@ -328,7 +328,7 @@ check("generate route guards stage before chat and validates its result", () => 
   );
   const modelCall = generateBranch.indexOf("const text = await chat(");
   const resultValidation = generateBranch.indexOf(
-    "validateGenerationStageResult(stage, extractJson(text))",
+    "let result = validateGenerationStageResult(",
   );
   assert.ok(stageGuard >= 0 && stageGuard < modelCall);
   assert.ok(resultValidation > modelCall);
@@ -339,7 +339,7 @@ check("generate route guards stage before chat and validates its result", () => 
     routeSource.slice(0, generateStart) + routeSource.slice(moduleStart);
   assert.equal(
     nonGenerateSource.includes(
-      "validateGenerationStageResult(stage, extractJson(text))",
+      "let result = validateGenerationStageResult(",
     ),
     false,
   );

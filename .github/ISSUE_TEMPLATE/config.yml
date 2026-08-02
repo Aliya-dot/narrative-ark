@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私密安全报告
+    url: https://github.com/Aliya-dot/narrative-ark/security/advisories/new
+    about: 报告漏洞、密钥泄露或其他敏感问题

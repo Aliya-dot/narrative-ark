@@ -19,4 +19,15 @@ export function resolveAppTheme(value: string | null): AppThemeId {
     : DEFAULT_APP_THEME;
 }
 
+export function applyStoredAppTheme(storage: Pick<Storage, "getItem">) {
+  let theme = DEFAULT_APP_THEME;
+  try {
+    theme = resolveAppTheme(storage.getItem(APP_THEME_STORAGE_KEY));
+  } catch {
+    // Keep the deterministic default when storage is unavailable.
+  }
+  document.documentElement.dataset.theme = theme;
+  return theme;
+}
+
 export const APP_THEME_BOOTSTRAP_SCRIPT = `(()=>{try{const themes=${JSON.stringify(APP_THEME_IDS)};const stored=localStorage.getItem(${JSON.stringify(APP_THEME_STORAGE_KEY)});document.documentElement.dataset.theme=themes.includes(stored)?stored:${JSON.stringify(DEFAULT_APP_THEME)}}catch{document.documentElement.dataset.theme=${JSON.stringify(DEFAULT_APP_THEME)}}})()`;

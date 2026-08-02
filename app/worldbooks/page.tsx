@@ -30,17 +30,13 @@ import {
 } from "@/lib/world-book-record-write";
 import { createWorldBookBundle, parseWorldBookBundle } from "@/lib/world-book";
 import { advanceWorldBookUpdatedAt } from "@/lib/world-book-publish-boundary";
+import { savePortableText } from "@/lib/platform/portable-files";
 
-function downloadJson(name: string, value: unknown) {
-  const blob = new Blob([JSON.stringify(value, null, 2)], {
-    type: "application/json;charset=utf-8",
+async function downloadJson(name: string, value: unknown) {
+  await savePortableText(name, JSON.stringify(value, null, 2), {
+    title: "导出叙界世界书",
+    extensions: ["nark-world", "json"],
   });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 const worldBookRecordStore: WorldBookRecordStore = {
@@ -138,8 +134,8 @@ export default function WorldBooksPage() {
         .equals(book.id)
         .sortBy("versionNumber"),
     ]);
-    downloadJson(
-      `${book.name}-世界书.json`,
+    await downloadJson(
+      `${book.name}-世界书.nark-world`,
       createWorldBookBundle(book, entries, versions),
     );
   }
@@ -255,7 +251,7 @@ export default function WorldBooksPage() {
             ref={fileRef}
             className="hidden"
             type="file"
-            accept="application/json,.json"
+            accept=".nark-world,.json,application/json"
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) void importFile(file);
