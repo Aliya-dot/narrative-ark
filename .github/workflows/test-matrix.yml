@@ -52,9 +52,58 @@ jobs:
           if (-not $installer) { throw "Windows setup executable not found" }
           ./scripts/windows-release-smoke.ps1 -CurrentInstaller $installer.FullName
 
+  android-emulator-apk:
+    name: Build Android x86_64 emulator APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
+          echo "NDK_HOME=${ANDROID_HOME}/ndk/29.0.14206865" >> "${GITHUB_ENV}"
+      - run: npm ci
+      - name: Build same-commit x86_64 debug APK
+        run: npm exec tauri -- android build --debug --apk --target x86_64 --ci
+      - name: Stage emulator APK
+        run: |
+          mkdir -p emulator-under-test
+          apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*debug.apk' | head -n 1)"
+          test -n "${apk}"
+          cp "${apk}" emulator-under-test/narrative-ark-x86_64-debug.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-x86_64-emulator-apk
+          path: emulator-under-test/narrative-ark-x86_64-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
   android-installer:
     name: Android API ${{ matrix.api_level }} / ${{ matrix.screen_size }}
     runs-on: ubuntu-latest
+    needs: android-emulator-apk
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -70,17 +119,14 @@ jobs:
             screen_size: 1280x800
             density: 240
     env:
-      GH_TOKEN: ${{ github.token }}
       ANDROID_API_LEVEL: ${{ matrix.api_level }}
     steps:
       - uses: actions/checkout@v7
-      - name: Download latest Android APK
-        run: |
-          mkdir -p release-under-test
-          gh release download \
-            --repo "${{ github.repository }}" \
-            --pattern "*_android-universal.apk" \
-            --dir release-under-test
+      - name: Download same-commit emulator APK
+        uses: actions/download-artifact@v8
+        with:
+          name: android-x86_64-emulator-apk
+          path: emulator-under-test
       - name: Install and cold-start APK
         uses: ReactiveCircus/android-emulator-runner@v2.38.0
         with:
@@ -89,10 +135,10 @@ jobs:
           arch: ${{ matrix.arch }}
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash scripts/android-emulator-smoke.sh release-under-test/*_android-universal.apk "${{ matrix.screen_size }}" "${{ matrix.density }}"
+          script: bash scripts/android-emulator-smoke.sh emulator-under-test/narrative-ark-x86_64-debug.apk "${{ matrix.screen_size }}" "${{ matrix.density }}"
       - name: Upload startup screenshot
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: android-api-${{ matrix.api_level }}-${{ matrix.screen_size }}
           path: android-smoke-api-${{ matrix.api_level }}.png
