@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="叙界">
   <rect width="512" height="512" rx="0" fill="#faf9ee"/>
-  
+
   <g transform="translate(136 126) scale(5)">
     <path d="M24 2 36 27 24 43 12 27 24 2Z" fill="#173f32"/>
     <path d="M24 9v26" fill="none" stroke="#faf9ee" stroke-width="2" stroke-linecap="round"/>
