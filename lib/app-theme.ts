@@ -10,19 +10,32 @@ export const APP_THEMES = [
 export type AppThemeId = (typeof APP_THEMES)[number]["id"];
 
 export const DEFAULT_APP_THEME: AppThemeId = "dark";
+export const ANDROID_DEFAULT_APP_THEME: AppThemeId = "celadon";
 
 const APP_THEME_IDS = APP_THEMES.map((theme) => theme.id);
 
-export function resolveAppTheme(value: string | null): AppThemeId {
-  return APP_THEME_IDS.includes(value as AppThemeId)
-    ? (value as AppThemeId)
+export function resolveDefaultAppTheme(userAgent: string): AppThemeId {
+  return userAgent.toLowerCase().includes("android")
+    ? ANDROID_DEFAULT_APP_THEME
     : DEFAULT_APP_THEME;
 }
 
-export function applyStoredAppTheme(storage: Pick<Storage, "getItem">) {
-  let theme = DEFAULT_APP_THEME;
+export function resolveAppTheme(
+  value: string | null,
+  userAgent = "",
+): AppThemeId {
+  return APP_THEME_IDS.includes(value as AppThemeId)
+    ? (value as AppThemeId)
+    : resolveDefaultAppTheme(userAgent);
+}
+
+export function applyStoredAppTheme(
+  storage: Pick<Storage, "getItem">,
+  userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent,
+) {
+  let theme = resolveDefaultAppTheme(userAgent);
   try {
-    theme = resolveAppTheme(storage.getItem(APP_THEME_STORAGE_KEY));
+    theme = resolveAppTheme(storage.getItem(APP_THEME_STORAGE_KEY), userAgent);
   } catch {
     // Keep the deterministic default when storage is unavailable.
   }
@@ -30,4 +43,4 @@ export function applyStoredAppTheme(storage: Pick<Storage, "getItem">) {
   return theme;
 }
 
-export const APP_THEME_BOOTSTRAP_SCRIPT = `(()=>{try{const themes=${JSON.stringify(APP_THEME_IDS)};const stored=localStorage.getItem(${JSON.stringify(APP_THEME_STORAGE_KEY)});document.documentElement.dataset.theme=themes.includes(stored)?stored:${JSON.stringify(DEFAULT_APP_THEME)}}catch{document.documentElement.dataset.theme=${JSON.stringify(DEFAULT_APP_THEME)}}})()`;
+export const APP_THEME_BOOTSTRAP_SCRIPT = `(()=>{const ua=typeof navigator==="undefined"?"":navigator.userAgent;const fallback=ua.toLowerCase().includes("android")?${JSON.stringify(ANDROID_DEFAULT_APP_THEME)}:${JSON.stringify(DEFAULT_APP_THEME)};try{const themes=${JSON.stringify(APP_THEME_IDS)};const stored=localStorage.getItem(${JSON.stringify(APP_THEME_STORAGE_KEY)});document.documentElement.dataset.theme=themes.includes(stored)?stored:fallback}catch{document.documentElement.dataset.theme=fallback}})()`;

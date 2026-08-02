@@ -17,6 +17,7 @@ export function ThemePicker() {
   useEffect(() => {
     const storedTheme = resolveAppTheme(
       localStorage.getItem(APP_THEME_STORAGE_KEY),
+      navigator.userAgent,
     );
     setTheme(storedTheme);
     document.documentElement.dataset.theme = storedTheme;
