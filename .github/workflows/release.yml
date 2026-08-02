@@ -41,6 +41,7 @@ jobs:
       - name: Validate release inputs
         run: |
           npm run release:preflight
+          npm run test:matrix
           npm run lint
           npm run typecheck
           npm run client:typecheck
@@ -177,6 +178,7 @@ jobs:
       - name: Validate Android release inputs
         run: |
           npm run release:preflight:android
+          npm run test:matrix
           npm run lint
           npm run typecheck
           npm run client:typecheck

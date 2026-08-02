@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 1,
+  "baselineVersion": "0.1.5",
+  "firstDeliveryGoal": "Windows 安装包和 Android APK 均可安装，能创建项目、调用模型、连续游玩、保存、重开和导出，且全程不依赖自有服务器。",
+  "dimensions": {
+    "platforms": [
+      {
+        "id": "windows-10",
+        "label": "Windows 10 22H2 x64",
+        "execution": "manual-device"
+      },
+      {
+        "id": "windows-11",
+        "label": "Windows 11 当前稳定版 x64",
+        "execution": "manual-device"
+      },
+      {
+        "id": "windows-runner-2022",
+        "label": "GitHub Windows 2022 runner（安装器代理验证）",
+        "execution": "scheduled"
+      },
+      {
+        "id": "windows-runner-2025",
+        "label": "GitHub Windows 2025 runner（安装器代理验证）",
+        "execution": "scheduled"
+      },
+      {
+        "id": "android-9",
+        "label": "Android 9 / API 28",
+        "execution": "scheduled-emulator"
+      },
+      {
+        "id": "android-current",
+        "label": "Android 当前 targetSdk / API 36",
+        "execution": "scheduled-emulator"
+      }
+    ],
+    "viewports": [
+      { "id": "desktop-1366-100", "label": "1366×768 / 100%" },
+      { "id": "desktop-1920-125", "label": "1920×1080 / 125%" },
+      { "id": "desktop-2560-150", "label": "2560×1440 / 150%" },
+      { "id": "desktop-3840-200", "label": "3840×2160 / 200%" },
+      { "id": "phone-compact", "label": "360×640 / Android 紧凑屏" },
+      { "id": "phone-standard", "label": "412×915 / Android 标准屏" },
+      { "id": "tablet-portrait", "label": "800×1280 / Android 平板竖屏" },
+      { "id": "tablet-landscape", "label": "1280×800 / Android 平板横屏" }
+    ],
+    "providers": [
+      {
+        "id": "deepseek",
+        "label": "DeepSeek 官方 OpenAI 兼容接口",
+        "credential": "tester-supplied"
+      },
+      {
+        "id": "qwen",
+        "label": "通义千问百炼兼容接口",
+        "credential": "tester-supplied"
+      },
+      {
+        "id": "ollama-loopback",
+        "label": "Ollama 本机回环接口",
+        "credential": "none"
+      },
+      {
+        "id": "ollama-lan",
+        "label": "Ollama 局域网接口（Android）",
+        "credential": "none"
+      }
+    ],
+    "journeys": [
+      { "id": "create", "label": "创建项目" },
+      { "id": "edit", "label": "编辑项目与世界书" },
+      { "id": "play", "label": "连续游玩至少 10 回合" },
+      { "id": "save", "label": "保存当前进度" },
+      { "id": "reopen", "label": "完全退出后重开并继续" },
+      { "id": "export", "label": "导出项目、存档与游戏记录" }
+    ],
+    "faults": [
+      { "id": "offline", "label": "请求前断网" },
+      { "id": "offline-mid-request", "label": "请求中断网" },
+      { "id": "timeout", "label": "模型请求超时" },
+      { "id": "auth-error", "label": "模型返回 401/403" },
+      { "id": "rate-limit", "label": "模型返回 429" },
+      { "id": "model-5xx", "label": "模型返回 5xx" },
+      { "id": "malformed-response", "label": "空正文、截断或畸形 JSON" },
+      { "id": "database-restore", "label": "数据库事务回滚与备份恢复" }
+    ],
+    "compatibility": [
+      { "id": "upgrade-install", "label": "旧安装包原位升级并保留应用数据" },
+      { "id": "project-migration", "label": "旧项目结构迁移" },
+      { "id": "save-migration", "label": "旧存档结构迁移" },
+      { "id": "export-import", "label": "旧导出包重新导入" }
+    ]
+  },
+  "cases": [
+    {
+      "id": "AUTO-MODEL-001",
+      "title": "模型兼容端点、鉴权和请求体",
+      "kind": "automated",
+      "covers": ["deepseek", "qwen", "ollama-loopback", "ollama-lan"],
+      "evidence": ["lib/model-provider-matrix.test.mts"]
+    },
+    {
+      "id": "AUTO-FAULT-001",
+      "title": "断网、超时、鉴权、限流、服务异常和畸形响应",
+      "kind": "automated",
+      "covers": [
+        "offline",
+        "timeout",
+        "auth-error",
+        "rate-limit",
+        "model-5xx",
+        "malformed-response"
+      ],
+      "evidence": [
+        "lib/model-provider-matrix.test.mts",
+        "lib/model-execution.test.mts",
+        "lib/promise-timeout.test.mts"
+      ]
+    },
+    {
+      "id": "AUTO-DATA-001",
+      "title": "SQLite/IndexedDB 迁移、事务回滚和恢复",
+      "kind": "automated",
+      "covers": [
+        "database-restore",
+        "project-migration",
+        "save-migration",
+        "export-import"
+      ],
+      "evidence": [
+        "lib/local-data/local-data-system.test.mts",
+        "lib/project-import-workflow.test.mts",
+        "lib/project-migration-legacy-regression.test.mts",
+        "lib/save-migration.test.mts"
+      ]
+    },
+    {
+      "id": "AUTO-WIN-001",
+      "title": "Windows 安装、启动、升级、卸载与数据保留",
+      "kind": "scheduled",
+      "covers": [
+        "windows-runner-2022",
+        "windows-runner-2025",
+        "upgrade-install"
+      ],
+      "evidence": [
+        "scripts/windows-release-smoke.ps1",
+        ".github/workflows/test-matrix.yml"
+      ]
+    },
+    {
+      "id": "AUTO-ANDROID-001",
+      "title": "Android 9 与当前 API 安装和冷启动",
+      "kind": "scheduled",
+      "covers": [
+        "android-9",
+        "android-current",
+        "phone-compact",
+        "tablet-landscape"
+      ],
+      "evidence": [
+        "scripts/android-emulator-smoke.sh",
+        ".github/workflows/test-matrix.yml"
+      ]
+    },
+    {
+      "id": "MANUAL-WIN-001",
+      "title": "Windows 10/11 客户端全流程与缩放验收",
+      "kind": "manual-device",
+      "covers": [
+        "windows-10",
+        "windows-11",
+        "desktop-1366-100",
+        "desktop-1920-125",
+        "desktop-2560-150",
+        "desktop-3840-200",
+        "create",
+        "edit",
+        "play",
+        "save",
+        "reopen",
+        "export"
+      ],
+      "evidence": [
+        "docs/TEST_MATRIX.md",
+        ".github/ISSUE_TEMPLATE/device_test_report.yml"
+      ]
+    },
+    {
+      "id": "MANUAL-ANDROID-001",
+      "title": "Android 真机全流程、旋转和后台恢复验收",
+      "kind": "manual-device",
+      "covers": [
+        "android-9",
+        "android-current",
+        "phone-compact",
+        "phone-standard",
+        "tablet-portrait",
+        "tablet-landscape",
+        "create",
+        "edit",
+        "play",
+        "save",
+        "reopen",
+        "export",
+        "offline-mid-request"
+      ],
+      "evidence": [
+        "docs/TEST_MATRIX.md",
+        ".github/ISSUE_TEMPLATE/device_test_report.yml"
+      ]
+    }
+  ],
+  "firstDeliveryGates": [
+    {
+      "id": "GATE-INSTALL-WINDOWS",
+      "requirement": "Windows 10/11 安装、启动与卸载通过",
+      "evidenceCases": ["AUTO-WIN-001", "MANUAL-WIN-001"]
+    },
+    {
+      "id": "GATE-INSTALL-ANDROID",
+      "requirement": "Android 9 与当前版 APK 安装、启动通过",
+      "evidenceCases": ["AUTO-ANDROID-001", "MANUAL-ANDROID-001"]
+    },
+    {
+      "id": "GATE-CORE-JOURNEY",
+      "requirement": "创建、模型调用、连续游玩、保存、重开、导出通过",
+      "evidenceCases": [
+        "AUTO-MODEL-001",
+        "MANUAL-WIN-001",
+        "MANUAL-ANDROID-001"
+      ]
+    },
+    {
+      "id": "GATE-LOCAL-FIRST",
+      "requirement": "客户端运行与模型调用不依赖项目自有服务器",
+      "evidenceCases": ["AUTO-MODEL-001", "AUTO-DATA-001"]
+    },
+    {
+      "id": "GATE-RECOVERY",
+      "requirement": "故障后无半成品写入，存档可恢复",
+      "evidenceCases": ["AUTO-FAULT-001", "AUTO-DATA-001"]
+    }
+  ]
+}

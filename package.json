@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "check": "npm run lint && npm run typecheck && npm run test:matrix && npm test && npm run build",
+    "test:matrix": "node scripts/validate-test-matrix.mjs",
     "icons:generate": "node --no-warnings --experimental-strip-types scripts/generate-app-icons.mts",
     "client:dev": "vite --config vite.config.ts",
     "client:build": "vite build --config vite.config.ts",

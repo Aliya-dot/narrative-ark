@@ -1,0 +1,90 @@
+name: 设备测试报告
+description: 提交 Windows、Android、屏幕缩放、模型或升级兼容验收结果
+title: "[设备测试] "
+labels: ["testing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿粘贴 API Key、签名密钥、完整存档或含个人信息的日志。
+  - type: dropdown
+    id: result
+    attributes:
+      label: 结论
+      options:
+        - 通过
+        - 有条件通过
+        - 失败
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Windows 10 22H2
+        - Windows 11 当前稳定版
+        - Android 9 / API 28
+        - Android 10～15
+        - Android 当前版本 / API 36
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统版本
+      placeholder: 例如 ThinkPad / Windows 11 24H2，或 Pixel 7 / Android 15
+    validations:
+      required: true
+  - type: input
+    id: display
+    attributes:
+      label: 分辨率、缩放、方向
+      placeholder: 例如 1920×1080 / 125%，或 412×915 / 竖屏
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: 模型服务
+      options:
+        - DeepSeek
+        - 通义千问
+        - Ollama 本机
+        - Ollama 局域网
+        - 其他 OpenAI 兼容接口
+        - 本次未测试模型
+    validations:
+      required: true
+  - type: checkboxes
+    id: journey
+    attributes:
+      label: 已执行流程
+      options:
+        - label: 安装与首次启动
+        - label: 创建项目
+        - label: 编辑项目或世界书
+        - label: 调用模型并连续游玩至少 10 回合
+        - label: 保存、完全退出、重开并继续
+        - label: 导出项目、存档或游戏记录
+        - label: 断网、超时或模型异常
+        - label: 旧版本升级与存档兼容
+  - type: textarea
+    id: steps
+    attributes:
+      label: 操作步骤与实际结果
+      placeholder: 按顺序记录操作、预期、实际结果和复现概率。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据
+      description: 可附脱敏截图、短视频、Actions 链接或脱敏日志。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已确认报告不含 API Key、签名材料、私人存档或个人信息。
+          required: true

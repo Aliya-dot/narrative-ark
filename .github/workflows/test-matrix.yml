@@ -1,0 +1,100 @@
+name: Device test matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-test-matrix
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Test matrix contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:matrix
+      - run: node --no-warnings --experimental-strip-types lib/model-provider-matrix.test.mts
+
+  windows-installer:
+    name: Windows installer surrogate / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download latest Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-under-test | Out-Null
+          gh release download `
+            --repo "${{ github.repository }}" `
+            --pattern "*_x64-setup.exe" `
+            --dir release-under-test
+      - name: Install, launch, update, uninstall and preserve data
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release-under-test -Filter "*_x64-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Windows setup executable not found" }
+          ./scripts/windows-release-smoke.ps1 -CurrentInstaller $installer.FullName
+
+  android-installer:
+    name: Android API ${{ matrix.api_level }} / ${{ matrix.screen_size }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api_level: 28
+            target: google_apis
+            arch: x86_64
+            screen_size: 360x640
+            density: 320
+          - api_level: 36
+            target: google_apis
+            arch: x86_64
+            screen_size: 1280x800
+            density: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ANDROID_API_LEVEL: ${{ matrix.api_level }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download latest Android APK
+        run: |
+          mkdir -p release-under-test
+          gh release download \
+            --repo "${{ github.repository }}" \
+            --pattern "*_android-universal.apk" \
+            --dir release-under-test
+      - name: Install and cold-start APK
+        uses: ReactiveCircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: ${{ matrix.api_level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/android-emulator-smoke.sh release-under-test/*_android-universal.apk "${{ matrix.screen_size }}" "${{ matrix.density }}"
+      - name: Upload startup screenshot
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-api-${{ matrix.api_level }}-${{ matrix.screen_size }}
+          path: android-smoke-api-${{ matrix.api_level }}.png
+          if-no-files-found: ignore
+          retention-days: 14

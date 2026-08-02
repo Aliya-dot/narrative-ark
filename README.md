@@ -72,6 +72,7 @@ cargo test --lib
 - [本地数据系统](docs/LOCAL_DATA_SYSTEM.md)
 - [Windows 发布](docs/WINDOWS_RELEASE.md)
 - [Android 发布](docs/ANDROID_RELEASE.md)
+- [测试矩阵与第一可交付验收](docs/TEST_MATRIX.md)
 
 ## 发布
 
